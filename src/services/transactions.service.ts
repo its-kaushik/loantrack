@@ -10,7 +10,7 @@ export async function recordTransaction(
   createdById: string,
   data: {
     loan_id: string;
-    transaction_type: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN';
+    transaction_type: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION';
     amount: number;
     transaction_date: string;
     effective_date?: string;
@@ -31,6 +31,8 @@ export async function recordTransaction(
         principalAmount: true,
         version: true,
         tenantId: true,
+        totalCollected: true,
+        totalRepaymentAmount: true,
       },
     });
 
@@ -42,8 +44,15 @@ export async function recordTransaction(
       throw AppError.badRequest('Loan is not active');
     }
 
+    if (data.transaction_type === 'DAILY_COLLECTION') {
+      if (loan.loanType !== 'DAILY') {
+        throw AppError.badRequest('DAILY_COLLECTION is only for DAILY loans');
+      }
+      return handleDailyCollection(tx, tenantId, createdById, loan, data);
+    }
+
     if (loan.loanType !== 'MONTHLY') {
-      throw AppError.badRequest('Only MONTHLY loans support this transaction type');
+      throw AppError.badRequest('INTEREST_PAYMENT and PRINCIPAL_RETURN are only for MONTHLY loans');
     }
 
     const transactionDate = parseDate(data.transaction_date);
@@ -242,6 +251,49 @@ export async function recordTransaction(
 
     return createdTransactions;
   });
+}
+
+// ─── Daily Collection Handler ─────────────────────────────────────────────
+
+async function handleDailyCollection(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  tenantId: string,
+  createdById: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loan: any,
+  data: { amount: number; transaction_date: string; notes?: string },
+) {
+  const transactionDate = parseDate(data.transaction_date);
+
+  // Create DAILY_COLLECTION transaction (auto-approved, no effectiveDate)
+  const txn = await tx.transaction.create({
+    data: {
+      tenantId,
+      loanId: loan.id,
+      transactionType: 'DAILY_COLLECTION',
+      amount: data.amount,
+      transactionDate,
+      approvalStatus: 'APPROVED',
+      collectedById: createdById,
+      notes: data.notes,
+    },
+  });
+
+  // Increment totalCollected with optimistic lock
+  const updateResult = await tx.loan.updateMany({
+    where: { id: loan.id, tenantId, version: loan.version },
+    data: {
+      totalCollected: { increment: data.amount },
+      version: { increment: 1 },
+    },
+  });
+
+  if (updateResult.count === 0) {
+    throw AppError.conflict('Loan was modified concurrently, please retry');
+  }
+
+  return [formatTransaction(txn)];
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

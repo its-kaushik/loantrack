@@ -32,11 +32,13 @@ import {
   loanIdParamSchema,
   listLoansQuerySchema,
   listLoanTransactionsQuerySchema,
-  createMonthlyLoanSchema,
+  createLoanSchema,
   loanResponseSchema,
   monthlyLoanDetailResponseSchema,
+  dailyLoanDetailResponseSchema,
   loanTransactionResponseSchema,
   paymentStatusResponseSchema,
+  dailyPaymentStatusResponseSchema,
 } from '../schemas/loan.schema.js';
 import {
   createTransactionSchema,
@@ -399,18 +401,18 @@ registry.registerPath({
   method: 'post',
   path: '/loans',
   tags: ['Loans'],
-  summary: 'Disburse a new monthly loan',
+  summary: 'Disburse a new loan (monthly or daily)',
   security: bearerAuth,
   request: {
     body: {
       required: true,
-      content: { 'application/json': { schema: createMonthlyLoanSchema } },
+      content: { 'application/json': { schema: createLoanSchema } },
     },
   },
   responses: {
     201: {
       description: 'Loan created',
-      content: { 'application/json': { schema: createSuccessResponse(monthlyLoanDetailResponseSchema) } },
+      content: { 'application/json': { schema: createSuccessResponse(z.union([monthlyLoanDetailResponseSchema, dailyLoanDetailResponseSchema])) } },
     },
     400: errorResponses[400],
     401: errorResponses[401],
@@ -458,7 +460,7 @@ registry.registerPath({
   responses: {
     200: {
       description: 'Loan detail',
-      content: { 'application/json': { schema: createSuccessResponse(monthlyLoanDetailResponseSchema) } },
+      content: { 'application/json': { schema: createSuccessResponse(z.union([monthlyLoanDetailResponseSchema, dailyLoanDetailResponseSchema])) } },
     },
     401: errorResponses[401],
     403: errorResponses[403],
@@ -499,15 +501,15 @@ registry.registerPath({
   method: 'get',
   path: '/loans/{id}/payment-status',
   tags: ['Loans'],
-  summary: 'Get month-by-month payment status for a loan',
+  summary: 'Get payment status for a loan',
   security: bearerAuth,
   request: {
     params: loanIdParamSchema,
   },
   responses: {
     200: {
-      description: 'Payment status with cycles',
-      content: { 'application/json': { schema: createSuccessResponse(paymentStatusResponseSchema) } },
+      description: 'Payment status',
+      content: { 'application/json': { schema: createSuccessResponse(z.union([paymentStatusResponseSchema, dailyPaymentStatusResponseSchema])) } },
     },
     400: errorResponses[400],
     401: errorResponses[401],
@@ -528,7 +530,7 @@ registry.registerPath({
   responses: {
     200: {
       description: 'Loan closed',
-      content: { 'application/json': { schema: createSuccessResponse(monthlyLoanDetailResponseSchema) } },
+      content: { 'application/json': { schema: createSuccessResponse(z.union([monthlyLoanDetailResponseSchema, dailyLoanDetailResponseSchema])) } },
     },
     400: errorResponses[400],
     401: errorResponses[401],
@@ -544,7 +546,7 @@ registry.registerPath({
   method: 'post',
   path: '/transactions',
   tags: ['Transactions'],
-  summary: 'Record a transaction (interest payment or principal return)',
+  summary: 'Record a transaction (interest payment, principal return, or daily collection)',
   security: bearerAuth,
   request: {
     body: {

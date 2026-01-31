@@ -9,7 +9,7 @@ export const createTransactionSchema = z
   .object({
     loan_id: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
     transaction_type: z
-      .enum(['INTEREST_PAYMENT', 'PRINCIPAL_RETURN'])
+      .enum(['INTEREST_PAYMENT', 'PRINCIPAL_RETURN', 'DAILY_COLLECTION'])
       .openapi({ example: 'INTEREST_PAYMENT' }),
     amount: z.number().positive().openapi({ example: 2500 }),
     transaction_date: z

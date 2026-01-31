@@ -7,7 +7,7 @@ import {
   loanIdParamSchema,
   listLoansQuerySchema,
   listLoanTransactionsQuerySchema,
-  createMonthlyLoanSchema,
+  createLoanSchema,
 } from '../schemas/loan.schema.js';
 import * as loansController from '../controllers/loans.controller.js';
 
@@ -20,7 +20,7 @@ router.use(authenticate, requireTenant);
 router.post(
   '/',
   requireRole('ADMIN'),
-  validate({ body: createMonthlyLoanSchema }),
+  validate({ body: createLoanSchema }),
   loansController.createLoanHandler,
 );
 

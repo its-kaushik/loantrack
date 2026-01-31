@@ -3,7 +3,9 @@ import * as loansService from '../services/loans.service.js';
 import { sendSuccess, sendPaginated } from '../utils/response.js';
 
 export async function createLoanHandler(req: Request, res: Response) {
-  const loan = await loansService.createMonthlyLoan(req.tenantId!, req.user!.userId, req.body);
+  const loan = req.body.loan_type === 'DAILY'
+    ? await loansService.createDailyLoan(req.tenantId!, req.user!.userId, req.body)
+    : await loansService.createMonthlyLoan(req.tenantId!, req.user!.userId, req.body);
   sendSuccess(res, loan, 201);
 }
 
