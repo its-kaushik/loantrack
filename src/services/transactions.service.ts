@@ -11,11 +11,12 @@ export async function recordTransaction(
   callerRole: 'ADMIN' | 'COLLECTOR',
   data: {
     loan_id: string;
-    transaction_type: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION' | 'PENALTY';
+    transaction_type: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION' | 'PENALTY' | 'GUARANTOR_PAYMENT';
     amount: number;
     transaction_date: string;
     effective_date?: string;
     penalty_id?: string;
+    corrected_transaction_id?: string;
     notes?: string;
   },
 ) {
@@ -50,6 +51,22 @@ export async function recordTransaction(
       throw AppError.badRequest(`Cannot record transactions on a ${loan.status} loan`);
     }
     // ACTIVE and DEFAULTED are accepted
+
+    // Corrective transaction flow
+    if (data.corrected_transaction_id) {
+      if (callerRole !== 'ADMIN') {
+        throw AppError.forbidden('Only admins can create corrective transactions');
+      }
+      return handleCorrectiveTransaction(tx, tenantId, createdById, loan, data);
+    }
+
+    // GUARANTOR_PAYMENT routing
+    if (data.transaction_type === 'GUARANTOR_PAYMENT') {
+      if (loan.status !== 'DEFAULTED') {
+        throw AppError.badRequest('GUARANTOR_PAYMENT is only allowed on DEFAULTED loans');
+      }
+      return handleGuarantorPayment(tx, tenantId, createdById, loan, data, approvalStatus, isAutoApproved);
+    }
 
     if (data.transaction_type === 'DAILY_COLLECTION') {
       if (loan.loanType !== 'DAILY') {
@@ -452,6 +469,8 @@ async function executeSideEffects(tx: any, tenantId: string, approvedById: strin
       principalAmount: true,
       interestRate: true,
       billingPrincipal: true,
+      loanType: true,
+      totalCollected: true,
     },
   });
 
@@ -506,6 +525,20 @@ async function executeSideEffects(tx: any, tenantId: string, approvedById: strin
   } else if (transaction.transactionType === 'PENALTY') {
     if (transaction.penaltyId) {
       await applyPenaltyPaymentSideEffect(tx, tenantId, transaction.penaltyId, Number(transaction.amount));
+    }
+  } else if (transaction.transactionType === 'GUARANTOR_PAYMENT') {
+    // Increment totalCollected for DAILY loans only
+    if (loan.loanType === 'DAILY') {
+      const updateResult = await tx.loan.updateMany({
+        where: { id: loan.id, tenantId, version: loan.version },
+        data: {
+          totalCollected: { increment: Number(transaction.amount) },
+          version: { increment: 1 },
+        },
+      });
+      if (updateResult.count === 0) {
+        throw AppError.conflict('Loan was modified concurrently, please retry');
+      }
     }
   }
   // INTEREST_PAYMENT — no loan-level side effect
@@ -647,7 +680,7 @@ export async function listTransactions(
   tenantId: string,
   query: {
     approval_status?: 'PENDING' | 'APPROVED' | 'REJECTED';
-    transaction_type?: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION' | 'PENALTY';
+    transaction_type?: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION' | 'PENALTY' | 'GUARANTOR_PAYMENT';
     loan_id?: string;
     collected_by?: string;
     page: number;
@@ -741,6 +774,247 @@ export async function recordBulkCollections(
   }
 
   return { created, failed, results };
+}
+
+// ─── Guarantor Payment Handler ────────────────────────────────────────────
+
+async function handleGuarantorPayment(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  tenantId: string,
+  createdById: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loan: any,
+  data: { amount: number; transaction_date: string; notes?: string },
+  approvalStatus: string,
+  isAutoApproved: boolean,
+) {
+  const transactionDate = parseDate(data.transaction_date);
+
+  const txn = await tx.transaction.create({
+    data: {
+      tenantId,
+      loanId: loan.id,
+      transactionType: 'GUARANTOR_PAYMENT',
+      amount: data.amount,
+      transactionDate,
+      approvalStatus,
+      collectedById: createdById,
+      approvedById: isAutoApproved ? createdById : undefined,
+      approvedAt: isAutoApproved ? new Date() : undefined,
+      notes: data.notes,
+    },
+  });
+
+  // Increment totalCollected only for DAILY loans when auto-approved
+  if (isAutoApproved && loan.loanType === 'DAILY') {
+    const updateResult = await tx.loan.updateMany({
+      where: { id: loan.id, tenantId, version: loan.version },
+      data: {
+        totalCollected: { increment: data.amount },
+        version: { increment: 1 },
+      },
+    });
+    if (updateResult.count === 0) {
+      throw AppError.conflict('Loan was modified concurrently, please retry');
+    }
+  }
+
+  return [formatTransaction(txn)];
+}
+
+// ─── Corrective Transaction Handler ──────────────────────────────────────
+
+async function handleCorrectiveTransaction(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  tenantId: string,
+  createdById: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loan: any,
+  data: {
+    loan_id: string;
+    transaction_type: string;
+    amount: number;
+    corrected_transaction_id?: string;
+    transaction_date: string;
+    effective_date?: string;
+    notes?: string;
+  },
+) {
+  // Fetch the original transaction
+  const original = await tx.transaction.findFirst({
+    where: { id: data.corrected_transaction_id, tenantId },
+  });
+
+  if (!original) {
+    throw AppError.notFound('Original transaction not found');
+  }
+
+  // Validate same loan
+  if (original.loanId !== data.loan_id) {
+    throw AppError.badRequest('Corrected transaction does not belong to the specified loan');
+  }
+
+  // Validate same type
+  if (original.transactionType !== data.transaction_type) {
+    throw AppError.badRequest('Corrective transaction must match the type of the original transaction');
+  }
+
+  // Validate original is APPROVED
+  if (original.approvalStatus !== 'APPROVED') {
+    throw AppError.badRequest('Can only correct APPROVED transactions');
+  }
+
+  // Validate no existing correction
+  const existingCorrection = await tx.transaction.findFirst({
+    where: { correctedTransactionId: data.corrected_transaction_id, tenantId },
+  });
+  if (existingCorrection) {
+    throw AppError.conflict('This transaction has already been corrected');
+  }
+
+  // Amount must be negative (schema validates this, but double-check)
+  if (data.amount >= 0) {
+    throw AppError.badRequest('Corrective transaction amount must be negative');
+  }
+
+  const transactionDate = parseDate(data.transaction_date);
+
+  // Create corrective transaction (auto-approved for admin)
+  const txn = await tx.transaction.create({
+    data: {
+      tenantId,
+      loanId: loan.id,
+      transactionType: data.transaction_type,
+      amount: data.amount,
+      transactionDate,
+      effectiveDate: data.effective_date ? parseDate(data.effective_date) : original.effectiveDate,
+      approvalStatus: 'APPROVED',
+      correctedTransactionId: data.corrected_transaction_id,
+      collectedById: createdById,
+      approvedById: createdById,
+      approvedAt: new Date(),
+      notes: data.notes ?? `Correction of transaction ${data.corrected_transaction_id}`,
+    },
+  });
+
+  // Execute reversed side effects
+  await executeReversedSideEffects(tx, tenantId, loan, original, Math.abs(data.amount), txn.id);
+
+  return [formatTransaction(txn)];
+}
+
+// ─── Reversed Side Effects ───────────────────────────────────────────────
+
+async function executeReversedSideEffects(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  tenantId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loanRef: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  original: any,
+  absAmount: number,
+  correctiveTransactionId: string,
+) {
+  const amount = new Decimal(absAmount);
+
+  // Re-fetch loan to get current version (the passed loan object may be stale)
+  const loan = await tx.loan.findFirst({
+    where: { id: loanRef.id, tenantId },
+    select: { id: true, version: true, loanType: true, remainingPrincipal: true, totalCollected: true },
+  });
+  if (!loan) {
+    throw AppError.notFound('Loan not found');
+  }
+
+  if (original.transactionType === 'PRINCIPAL_RETURN') {
+    // Increment remainingPrincipal back
+    const updateResult = await tx.loan.updateMany({
+      where: { id: loan.id, tenantId, version: loan.version },
+      data: {
+        remainingPrincipal: { increment: absAmount },
+        version: { increment: 1 },
+      },
+    });
+    if (updateResult.count === 0) {
+      throw AppError.conflict('Loan was modified concurrently, please retry');
+    }
+
+    // Insert negative principal_returns record
+    const currentLoan = await tx.loan.findFirst({
+      where: { id: loan.id, tenantId },
+      select: { remainingPrincipal: true },
+    });
+    await tx.principalReturn.create({
+      data: {
+        tenantId,
+        loanId: loan.id,
+        transactionId: correctiveTransactionId,
+        amountReturned: -absAmount,
+        remainingPrincipalAfter: Number(currentLoan.remainingPrincipal),
+        returnDate: parseDate(new Date().toISOString().slice(0, 10)),
+        createdById: original.collectedById ?? original.approvedById,
+      },
+    });
+  } else if (original.transactionType === 'DAILY_COLLECTION') {
+    // Decrement totalCollected
+    const updateResult = await tx.loan.updateMany({
+      where: { id: loan.id, tenantId, version: loan.version },
+      data: {
+        totalCollected: { decrement: absAmount },
+        version: { increment: 1 },
+      },
+    });
+    if (updateResult.count === 0) {
+      throw AppError.conflict('Loan was modified concurrently, please retry');
+    }
+  } else if (original.transactionType === 'GUARANTOR_PAYMENT') {
+    // Decrement totalCollected for daily loans only
+    if (loan.loanType === 'DAILY') {
+      const updateResult = await tx.loan.updateMany({
+        where: { id: loan.id, tenantId, version: loan.version },
+        data: {
+          totalCollected: { decrement: absAmount },
+          version: { increment: 1 },
+        },
+      });
+      if (updateResult.count === 0) {
+        throw AppError.conflict('Loan was modified concurrently, please retry');
+      }
+    }
+  } else if (original.transactionType === 'PENALTY') {
+    // Decrement penalty.amountCollected, recalculate status
+    if (original.penaltyId) {
+      const penalty = await tx.penalty.findFirst({
+        where: { id: original.penaltyId, tenantId },
+      });
+      if (penalty) {
+        const netPayable = new Decimal(penalty.netPayable.toString());
+        const newCollected = new Decimal(penalty.amountCollected.toString()).minus(amount);
+        const clamped = newCollected.lt(0) ? new Decimal(0) : newCollected;
+
+        let newStatus: string;
+        if (clamped.gte(netPayable)) {
+          newStatus = 'PAID';
+        } else if (clamped.gt(0)) {
+          newStatus = 'PARTIALLY_PAID';
+        } else {
+          newStatus = 'PENDING';
+        }
+
+        await tx.penalty.update({
+          where: { id: original.penaltyId },
+          data: {
+            amountCollected: clamped.toNumber(),
+            status: newStatus as 'PENDING' | 'PARTIALLY_PAID' | 'PAID' | 'WAIVED',
+          },
+        });
+      }
+    }
+  }
+  // INTEREST_PAYMENT — no loan-level side effect
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

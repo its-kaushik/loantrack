@@ -86,6 +86,12 @@ export const createLoanSchema = z
   .discriminatedUnion('loan_type', [createMonthlyLoanSchema, createDailyLoanSchema])
   .openapi('CreateLoanRequest');
 
+export const cancelLoanSchema = z
+  .object({
+    cancellation_reason: z.string().min(1).max(2000).openapi({ example: 'Loan was created in error' }),
+  })
+  .openapi('CancelLoanRequest');
+
 // ─── Response Schemas ──────────────────────────────────────────────────────
 
 export const loanResponseSchema = z

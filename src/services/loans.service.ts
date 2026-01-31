@@ -33,6 +33,13 @@ const loanDetailSelect = {
   notes: true,
   closureDate: true,
   closedById: true,
+  defaultedAt: true,
+  defaultedById: true,
+  cancelledAt: true,
+  cancelledById: true,
+  cancellationReason: true,
+  writtenOffAt: true,
+  writtenOffById: true,
   version: true,
 } as const;
 
@@ -49,6 +56,13 @@ const loanDailyDetailSelect = {
   notes: true,
   closureDate: true,
   closedById: true,
+  defaultedAt: true,
+  defaultedById: true,
+  cancelledAt: true,
+  cancelledById: true,
+  cancellationReason: true,
+  writtenOffAt: true,
+  writtenOffById: true,
   version: true,
 } as const;
 
@@ -98,6 +112,13 @@ function formatLoanDetail(loan: Record<string, unknown>) {
     notes: l.notes,
     closureDate: l.closureDate ? toDateString(l.closureDate) : null,
     closedById: l.closedById,
+    defaultedAt: l.defaultedAt ? l.defaultedAt.toISOString() : null,
+    defaultedById: l.defaultedById ?? null,
+    cancelledAt: l.cancelledAt ? l.cancelledAt.toISOString() : null,
+    cancelledById: l.cancelledById ?? null,
+    cancellationReason: l.cancellationReason ?? null,
+    writtenOffAt: l.writtenOffAt ? l.writtenOffAt.toISOString() : null,
+    writtenOffById: l.writtenOffById ?? null,
   };
 }
 
@@ -117,6 +138,13 @@ function formatDailyLoanDetail(loan: Record<string, unknown>) {
     notes: l.notes,
     closureDate: l.closureDate ? toDateString(l.closureDate) : null,
     closedById: l.closedById,
+    defaultedAt: l.defaultedAt ? l.defaultedAt.toISOString() : null,
+    defaultedById: l.defaultedById ?? null,
+    cancelledAt: l.cancelledAt ? l.cancelledAt.toISOString() : null,
+    cancelledById: l.cancelledById ?? null,
+    cancellationReason: l.cancellationReason ?? null,
+    writtenOffAt: l.writtenOffAt ? l.writtenOffAt.toISOString() : null,
+    writtenOffById: l.writtenOffById ?? null,
   };
 }
 
@@ -845,8 +873,37 @@ export async function closeLoan(tenantId: string, loanId: string, closedById: st
     throw AppError.notFound('Loan not found');
   }
 
-  if (loan.status !== 'ACTIVE') {
-    throw AppError.badRequest('Only ACTIVE loans can be closed');
+  if (loan.status !== 'ACTIVE' && loan.status !== 'DEFAULTED') {
+    throw AppError.badRequest('Only ACTIVE or DEFAULTED loans can be closed');
+  }
+
+  // DEFAULTED loans: admin judgment close — skip all financial validation
+  if (loan.status === 'DEFAULTED') {
+    const closureDate = parseDate(today());
+    const result = await prisma.loan.updateMany({
+      where: { id: loanId, tenantId, version: loan.version },
+      data: {
+        status: 'CLOSED',
+        closureDate,
+        closedById,
+        version: { increment: 1 },
+      },
+    });
+    if (result.count === 0) {
+      throw AppError.conflict('Loan was modified concurrently, please retry');
+    }
+    if (loan.loanType === 'DAILY') {
+      const updated = await prisma.loan.findFirst({
+        where: { id: loanId, tenantId },
+        select: loanDailyDetailSelect,
+      });
+      return getDailyLoanDetail(updated!);
+    }
+    const updated = await prisma.loan.findFirst({
+      where: { id: loanId, tenantId },
+      select: loanDetailSelect,
+    });
+    return formatLoanDetail(updated!);
   }
 
   if (loan.loanType === 'DAILY') {
@@ -987,4 +1044,175 @@ async function getCyclePayments(
     paid: paidAgg._sum.amount ? Number(paidAgg._sum.amount) : 0,
     waived: waivedAgg._sum.amount ? Number(waivedAgg._sum.amount) : 0,
   };
+}
+
+// ─── defaultLoan ──────────────────────────────────────────────────────────
+
+export async function defaultLoan(tenantId: string, loanId: string, adminId: string) {
+  return prisma.$transaction(async (tx) => {
+    const loan = await tx.loan.findFirst({
+      where: { id: loanId, tenantId },
+      select: { id: true, status: true, loanType: true, borrowerId: true, version: true },
+    });
+
+    if (!loan) {
+      throw AppError.notFound('Loan not found');
+    }
+
+    if (loan.status !== 'ACTIVE') {
+      throw AppError.badRequest('Only ACTIVE loans can be defaulted');
+    }
+
+    // Update loan status
+    const result = await tx.loan.updateMany({
+      where: { id: loanId, tenantId, version: loan.version },
+      data: {
+        status: 'DEFAULTED',
+        defaultedAt: new Date(),
+        defaultedById: adminId,
+        version: { increment: 1 },
+      },
+    });
+
+    if (result.count === 0) {
+      throw AppError.conflict('Loan was modified concurrently, please retry');
+    }
+
+    // Flag borrower as defaulter
+    await tx.customer.update({
+      where: { id: loan.borrowerId },
+      data: { isDefaulter: true },
+    });
+
+    // Re-fetch and return
+    if (loan.loanType === 'DAILY') {
+      const updated = await tx.loan.findFirst({
+        where: { id: loanId, tenantId },
+        select: loanDailyDetailSelect,
+      });
+      return getDailyLoanDetail(updated!);
+    }
+
+    const updated = await tx.loan.findFirst({
+      where: { id: loanId, tenantId },
+      select: loanDetailSelect,
+    });
+    return formatLoanDetail(updated!);
+  });
+}
+
+// ─── writeOffLoan ─────────────────────────────────────────────────────────
+
+export async function writeOffLoan(tenantId: string, loanId: string, adminId: string) {
+  const loan = await prisma.loan.findFirst({
+    where: { id: loanId, tenantId },
+    select: { id: true, status: true, loanType: true, version: true },
+  });
+
+  if (!loan) {
+    throw AppError.notFound('Loan not found');
+  }
+
+  if (loan.status !== 'DEFAULTED') {
+    throw AppError.badRequest('Only DEFAULTED loans can be written off');
+  }
+
+  const result = await prisma.loan.updateMany({
+    where: { id: loanId, tenantId, version: loan.version },
+    data: {
+      status: 'WRITTEN_OFF',
+      writtenOffAt: new Date(),
+      writtenOffById: adminId,
+      version: { increment: 1 },
+    },
+  });
+
+  if (result.count === 0) {
+    throw AppError.conflict('Loan was modified concurrently, please retry');
+  }
+
+  if (loan.loanType === 'DAILY') {
+    const updated = await prisma.loan.findFirst({
+      where: { id: loanId, tenantId },
+      select: loanDailyDetailSelect,
+    });
+    return getDailyLoanDetail(updated!);
+  }
+
+  const updated = await prisma.loan.findFirst({
+    where: { id: loanId, tenantId },
+    select: loanDetailSelect,
+  });
+  return formatLoanDetail(updated!);
+}
+
+// ─── cancelLoan ───────────────────────────────────────────────────────────
+
+export async function cancelLoan(tenantId: string, loanId: string, adminId: string, cancellationReason: string) {
+  return prisma.$transaction(async (tx) => {
+    const loan = await tx.loan.findFirst({
+      where: { id: loanId, tenantId },
+      select: { id: true, status: true, loanType: true, version: true },
+    });
+
+    if (!loan) {
+      throw AppError.notFound('Loan not found');
+    }
+
+    if (loan.status !== 'ACTIVE') {
+      throw AppError.badRequest('Only ACTIVE loans can be cancelled');
+    }
+
+    // Validate no APPROVED transactions beyond DISBURSEMENT and ADVANCE_INTEREST
+    const approvedNonInitial = await tx.transaction.count({
+      where: {
+        loanId,
+        tenantId,
+        approvalStatus: 'APPROVED',
+        transactionType: { notIn: ['DISBURSEMENT', 'ADVANCE_INTEREST'] },
+      },
+    });
+
+    if (approvedNonInitial > 0) {
+      throw AppError.badRequest('Cannot cancel loan with approved transactions beyond initial disbursement');
+    }
+
+    // Validate no PENDING transactions exist
+    const pendingCount = await tx.transaction.count({
+      where: { loanId, tenantId, approvalStatus: 'PENDING' },
+    });
+
+    if (pendingCount > 0) {
+      throw AppError.badRequest('Cannot cancel loan with pending transactions');
+    }
+
+    const result = await tx.loan.updateMany({
+      where: { id: loanId, tenantId, version: loan.version },
+      data: {
+        status: 'CANCELLED',
+        cancelledAt: new Date(),
+        cancelledById: adminId,
+        cancellationReason,
+        version: { increment: 1 },
+      },
+    });
+
+    if (result.count === 0) {
+      throw AppError.conflict('Loan was modified concurrently, please retry');
+    }
+
+    if (loan.loanType === 'DAILY') {
+      const updated = await tx.loan.findFirst({
+        where: { id: loanId, tenantId },
+        select: loanDailyDetailSelect,
+      });
+      return getDailyLoanDetail(updated!);
+    }
+
+    const updated = await tx.loan.findFirst({
+      where: { id: loanId, tenantId },
+      select: loanDetailSelect,
+    });
+    return formatLoanDetail(updated!);
+  });
 }

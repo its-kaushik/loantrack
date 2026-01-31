@@ -8,6 +8,7 @@ import {
   listLoansQuerySchema,
   listLoanTransactionsQuerySchema,
   createLoanSchema,
+  cancelLoanSchema,
 } from '../schemas/loan.schema.js';
 import {
   imposePenaltySchema,
@@ -67,6 +68,30 @@ router.patch(
   requireRole('ADMIN'),
   validate({ params: loanIdParamSchema }),
   loansController.closeLoanHandler,
+);
+
+// ADMIN only can default
+router.patch(
+  '/:id/default',
+  requireRole('ADMIN'),
+  validate({ params: loanIdParamSchema }),
+  loansController.defaultLoanHandler,
+);
+
+// ADMIN only can write off
+router.patch(
+  '/:id/write-off',
+  requireRole('ADMIN'),
+  validate({ params: loanIdParamSchema }),
+  loansController.writeOffLoanHandler,
+);
+
+// ADMIN only can cancel
+router.patch(
+  '/:id/cancel',
+  requireRole('ADMIN'),
+  validate({ params: loanIdParamSchema, body: cancelLoanSchema }),
+  loansController.cancelLoanHandler,
 );
 
 // ─── Penalty & Waiver Routes ───────────────────────────────────────────────

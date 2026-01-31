@@ -9,10 +9,11 @@ export const createTransactionSchema = z
   .object({
     loan_id: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
     transaction_type: z
-      .enum(['INTEREST_PAYMENT', 'PRINCIPAL_RETURN', 'DAILY_COLLECTION', 'PENALTY'])
+      .enum(['INTEREST_PAYMENT', 'PRINCIPAL_RETURN', 'DAILY_COLLECTION', 'PENALTY', 'GUARANTOR_PAYMENT'])
       .openapi({ example: 'INTEREST_PAYMENT' }),
-    amount: z.number().positive().openapi({ example: 2500 }),
+    amount: z.number().openapi({ example: 2500 }),
     penalty_id: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+    corrected_transaction_id: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
     transaction_date: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
@@ -24,15 +25,35 @@ export const createTransactionSchema = z
       .openapi({ example: '2026-02-15' }),
     notes: z.string().max(2000).optional().openapi({ example: 'Monthly interest payment' }),
   })
-  .refine(
-    (data) => {
-      if (data.transaction_type === 'INTEREST_PAYMENT' && !data.effective_date) {
-        return false;
+  .superRefine((data, ctx) => {
+    if (data.corrected_transaction_id) {
+      // Corrective transaction: amount must be negative
+      if (data.amount >= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Corrective transactions must have a negative amount',
+          path: ['amount'],
+        });
       }
-      return true;
-    },
-    { message: 'effective_date is required for INTEREST_PAYMENT', path: ['effective_date'] },
-  )
+    } else {
+      // Normal transaction: amount must be positive
+      if (data.amount <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Amount must be positive',
+          path: ['amount'],
+        });
+      }
+    }
+    // effective_date required for INTEREST_PAYMENT only when not corrective
+    if (data.transaction_type === 'INTEREST_PAYMENT' && !data.effective_date && !data.corrected_transaction_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'effective_date is required for INTEREST_PAYMENT',
+        path: ['effective_date'],
+      });
+    }
+  })
   .openapi('CreateTransactionRequest');
 
 // ─── Response Schemas ──────────────────────────────────────────────────────
@@ -105,6 +126,7 @@ export const listTransactionsQuerySchema = z
       | 'PRINCIPAL_RETURN'
       | 'DAILY_COLLECTION'
       | 'PENALTY'
+      | 'GUARANTOR_PAYMENT'
       | undefined,
     loan_id: data.loan_id,
     collected_by: data.collected_by,

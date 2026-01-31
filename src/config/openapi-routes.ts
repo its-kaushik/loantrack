@@ -33,6 +33,7 @@ import {
   listLoansQuerySchema,
   listLoanTransactionsQuerySchema,
   createLoanSchema,
+  cancelLoanSchema,
   loanResponseSchema,
   monthlyLoanDetailResponseSchema,
   dailyLoanDetailResponseSchema,
@@ -548,6 +549,76 @@ registry.registerPath({
   responses: {
     200: {
       description: 'Loan closed',
+      content: { 'application/json': { schema: createSuccessResponse(z.union([monthlyLoanDetailResponseSchema, dailyLoanDetailResponseSchema])) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/loans/{id}/default',
+  tags: ['Loans'],
+  summary: 'Mark a loan as defaulted',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Loan defaulted',
+      content: { 'application/json': { schema: createSuccessResponse(z.union([monthlyLoanDetailResponseSchema, dailyLoanDetailResponseSchema])) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/loans/{id}/write-off',
+  tags: ['Loans'],
+  summary: 'Write off a defaulted loan',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Loan written off',
+      content: { 'application/json': { schema: createSuccessResponse(z.union([monthlyLoanDetailResponseSchema, dailyLoanDetailResponseSchema])) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/loans/{id}/cancel',
+  tags: ['Loans'],
+  summary: 'Cancel a loan',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: cancelLoanSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Loan cancelled',
       content: { 'application/json': { schema: createSuccessResponse(z.union([monthlyLoanDetailResponseSchema, dailyLoanDetailResponseSchema])) } },
     },
     400: errorResponses[400],

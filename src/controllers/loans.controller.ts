@@ -39,3 +39,21 @@ export async function closeLoanHandler(req: Request, res: Response) {
   const loan = await loansService.closeLoan(req.tenantId!, loanId, req.user!.userId);
   sendSuccess(res, loan);
 }
+
+export async function defaultLoanHandler(req: Request, res: Response) {
+  const loanId = req.params.id as string;
+  const loan = await loansService.defaultLoan(req.tenantId!, loanId, req.user!.userId);
+  sendSuccess(res, loan);
+}
+
+export async function writeOffLoanHandler(req: Request, res: Response) {
+  const loanId = req.params.id as string;
+  const loan = await loansService.writeOffLoan(req.tenantId!, loanId, req.user!.userId);
+  sendSuccess(res, loan);
+}
+
+export async function cancelLoanHandler(req: Request, res: Response) {
+  const loanId = req.params.id as string;
+  const loan = await loansService.cancelLoan(req.tenantId!, loanId, req.user!.userId, req.body.cancellation_reason);
+  sendSuccess(res, loan);
+}
