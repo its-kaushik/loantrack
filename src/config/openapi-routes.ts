@@ -1,0 +1,229 @@
+import { registry } from './openapi.js';
+import { createSuccessResponse, errorResponses } from '../schemas/responses.schema.js';
+import {
+  loginSchema,
+  refreshSchema,
+  changePasswordSchema,
+  loginResponseSchema,
+  refreshResponseSchema,
+  messageResponseSchema,
+  getMeResponseSchema,
+} from '../schemas/auth.schema.js';
+import {
+  createUserSchema,
+  updateUserSchema,
+  resetPasswordSchema,
+  userIdParamSchema,
+  userResponseSchema,
+  usersListResponseSchema,
+} from '../schemas/user.schema.js';
+
+const bearerAuth = [{ bearerAuth: [] }];
+
+// ─── Auth Routes ────────────────────────────────────────────────
+
+registry.registerPath({
+  method: 'post',
+  path: '/auth/login',
+  tags: ['Auth'],
+  summary: 'Login with phone and password',
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: loginSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Login successful',
+      content: { 'application/json': { schema: createSuccessResponse(loginResponseSchema) } },
+    },
+    401: errorResponses[401],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/auth/refresh',
+  tags: ['Auth'],
+  summary: 'Refresh access token',
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: refreshSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Token refreshed',
+      content: { 'application/json': { schema: createSuccessResponse(refreshResponseSchema) } },
+    },
+    401: errorResponses[401],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/auth/logout',
+  tags: ['Auth'],
+  summary: 'Logout (revoke all refresh tokens)',
+  security: bearerAuth,
+  responses: {
+    200: {
+      description: 'Logged out',
+      content: { 'application/json': { schema: createSuccessResponse(messageResponseSchema) } },
+    },
+    401: errorResponses[401],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/auth/change-password',
+  tags: ['Auth'],
+  summary: 'Change current user password',
+  security: bearerAuth,
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: changePasswordSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Password changed',
+      content: { 'application/json': { schema: createSuccessResponse(messageResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/auth/me',
+  tags: ['Auth'],
+  summary: 'Get current authenticated user profile',
+  security: bearerAuth,
+  responses: {
+    200: {
+      description: 'Current user profile',
+      content: { 'application/json': { schema: createSuccessResponse(getMeResponseSchema) } },
+    },
+    401: errorResponses[401],
+  },
+});
+
+// ─── Users Routes ───────────────────────────────────────────────
+
+registry.registerPath({
+  method: 'get',
+  path: '/users',
+  tags: ['Users'],
+  summary: 'List all users in tenant',
+  security: bearerAuth,
+  responses: {
+    200: {
+      description: 'List of users',
+      content: { 'application/json': { schema: createSuccessResponse(usersListResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/users',
+  tags: ['Users'],
+  summary: 'Create a new user in tenant',
+  security: bearerAuth,
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: createUserSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'User created',
+      content: { 'application/json': { schema: createSuccessResponse(userResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'put',
+  path: '/users/{id}',
+  tags: ['Users'],
+  summary: 'Update a user',
+  security: bearerAuth,
+  request: {
+    params: userIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: updateUserSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'User updated',
+      content: { 'application/json': { schema: createSuccessResponse(userResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/users/{id}/deactivate',
+  tags: ['Users'],
+  summary: 'Deactivate a user',
+  security: bearerAuth,
+  request: {
+    params: userIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'User deactivated',
+      content: { 'application/json': { schema: createSuccessResponse(messageResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/users/{id}/reset-password',
+  tags: ['Users'],
+  summary: 'Reset a user password (admin)',
+  security: bearerAuth,
+  request: {
+    params: userIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: resetPasswordSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Password reset',
+      content: { 'application/json': { schema: createSuccessResponse(messageResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});

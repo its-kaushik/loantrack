@@ -57,7 +57,7 @@ Phase 12: Hardening & Polish (depends on all)
 | bcrypt | Password hashing (min 12 rounds) |
 | Jest + Supertest | Testing |
 | ESLint + Prettier | Code quality |
-| Swagger/OpenAPI (swagger-jsdoc + swagger-ui-express) | API docs |
+| @asteasolutions/zod-to-openapi + swagger-ui-express | API docs (OpenAPI 3.0 spec generated from Zod schemas) |
 
 ### Folder Structure
 
@@ -67,6 +67,8 @@ src/
   server.ts                 # Server entry point
   config/
     index.ts                # Environment config (DB, JWT secrets, etc.)
+    openapi.ts              # OpenAPI registry + security schemes + spec metadata
+    openapi-routes.ts       # All route registrations for OpenAPI spec (updated per phase)
   middleware/
     auth.ts                 # JWT verification, extract user context
     tenant.ts               # Inject tenant_id, check tenant is ACTIVE
@@ -75,6 +77,7 @@ src/
     validate.ts             # Zod schema validation middleware
   routes/
     index.ts                # Route aggregator
+    docs.routes.ts          # Swagger UI + JSON spec (mounted at /api-docs, dev/test only)
     auth.routes.ts
     platform.routes.ts      # Super admin routes
     users.routes.ts
@@ -89,7 +92,8 @@ src/
   controllers/              # Request/response handling (thin)
   services/                 # Business logic layer
   repositories/             # Data access (Prisma calls)
-  schemas/                  # Zod validation schemas
+  schemas/                  # Zod validation schemas (with .openapi() metadata)
+    responses.schema.ts     # Shared response envelope helpers (createSuccessResponse, errorResponses)
   utils/
     errors.ts               # Custom error classes (AppError, etc.)
     date.ts                 # Due date computation, billing cycle helpers
@@ -116,7 +120,8 @@ tests/
 - **Raw SQL via `prisma.$queryRaw`** for report/dashboard aggregations (fund summary, profit, overdue detection). Store queries in `src/utils/sql/`.
 - **All multi-step financial operations** wrapped in `prisma.$transaction()`.
 - **tenant_id**: extracted from JWT, never from request body/params.
-- **Error responses**: consistent `{ error: { code, message, details } }` format.
+- **Response envelope**: All API responses use a consistent envelope. Success: `{ success: true, data: T }`. Error: `{ success: false, error: { code, message, details } }`. Use `sendSuccess(res, data)` from `src/utils/response.ts` — never construct the envelope manually.
+- **OpenAPI documentation**: Every Zod request/response schema must include `.openapi()` metadata (description, examples). Every new route must be registered in `src/config/openapi-routes.ts` with tags, request/response schemas wrapped in the success envelope via `createSuccessResponse()`, and appropriate error responses from `errorResponses`. Response schemas live alongside their request schemas in `src/schemas/*.schema.ts`. This is done incrementally per phase — not deferred to Phase 12.
 - **Pagination**: `page` + `limit` query params on all list endpoints.
 
 ---
@@ -1085,7 +1090,7 @@ interest_due = billing_principal_for_that_cycle * interest_rate / 100
 - Request logging (structured, not sensitive data)
 - Input sanitization audit
 - CORS configuration
-- Swagger/OpenAPI documentation
+- OpenAPI documentation audit (verify all endpoints registered, schemas complete)
 - Performance optimization (query analysis, indexes)
 - Edge case coverage
 - Seed script for demo data
@@ -1114,10 +1119,12 @@ interest_due = billing_principal_for_that_cycle * interest_rate / 100
    - Verify JWT secrets are strong and configurable
    - Verify passwords are never logged or returned in responses
 
-4. **API Documentation**
-   - Swagger/OpenAPI spec generated from route definitions
-   - All endpoints documented with request/response schemas
-   - Error codes documented
+4. **API Documentation Audit**
+   - OpenAPI spec is built incrementally per phase via `@asteasolutions/zod-to-openapi` (Swagger UI already served at `/api-docs`)
+   - Verify all endpoints from every phase are registered in `src/config/openapi-routes.ts`
+   - Verify all Zod schemas have `.openapi()` metadata with descriptions and examples
+   - Verify all response schemas are wrapped in the success envelope via `createSuccessResponse()`
+   - Verify error codes documented in the spec match actual error responses
 
 5. **Performance**
    - Analyze slow queries with `EXPLAIN ANALYZE`

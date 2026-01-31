@@ -3,6 +3,10 @@ import express from 'express';
 import cors from 'cors';
 import Decimal from 'decimal.js';
 import { errorHandler } from './middleware/error-handler.js';
+import { config } from './config/index.js';
+import authRoutes from './routes/auth.routes.js';
+import usersRoutes from './routes/users.routes.js';
+import docsRoutes from './routes/docs.routes.js';
 
 // Configure Decimal.js rounding globally before any financial logic executes.
 // ROUND_HALF_UP is standard in finance. This affects all Decimal operations app-wide.
@@ -14,10 +18,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Health check
+// Health check (raw response — not wrapped in envelope, it's an infra probe)
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
+
+// API docs (dev/test only)
+if (config.isDev || config.isTest) {
+  app.use('/api-docs', docsRoutes);
+}
+
+// API routes
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/users', usersRoutes);
 
 // Global error handler (must be last)
 app.use(errorHandler);

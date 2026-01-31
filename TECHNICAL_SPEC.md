@@ -15,8 +15,8 @@
 | ORM | Prisma | Type-safe queries, excellent migrations, good DX |
 | Auth | JWT (access + refresh tokens) | Stateless auth, works well for API |
 | File Storage | Local disk (start), S3-compatible later | For ID proofs and photos |
-| Validation | Zod or Joi | Request body validation |
-| API Docs | Swagger/OpenAPI | Auto-generated from route definitions |
+| Validation | Zod | Request body validation + OpenAPI schema source |
+| API Docs | @asteasolutions/zod-to-openapi + swagger-ui-express | OpenAPI 3.0 spec generated programmatically from Zod schemas. Swagger UI at `/api-docs` (dev/test only). Raw spec at `/api-docs/swagger.json`. |
 
 ---
 
@@ -395,11 +395,36 @@ Every query is scoped to the authenticated user's tenant.
 
 ### 5.1 Conventions
 
+**Response Envelope** - All API responses use a consistent envelope:
+
+Success response:
+```json
+{
+  "success": true,
+  "data": { ... }
+}
+```
+
+Error response:
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Amount exceeds remaining principal",
+    "details": []
+  }
+}
+```
+
+Use `sendSuccess(res, data)` from `src/utils/response.ts` for all success responses. The error handler in `src/middleware/error-handler.ts` wraps errors automatically.
+
 **Pagination** - All list endpoints:
 - Query params: `page` (default: 1), `limit` (default: 50, max: 100)
 - Response:
 ```json
 {
+  "success": true,
   "data": [],
   "pagination": {
     "page": 1,
@@ -410,16 +435,11 @@ Every query is scoped to the authenticated user's tenant.
 }
 ```
 
-**Error Response** - All errors follow this format:
-```json
-{
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Amount exceeds remaining principal",
-    "details": []
-  }
-}
-```
+**OpenAPI Documentation** - Built incrementally per phase, not deferred:
+- Every Zod schema includes `.openapi()` metadata (descriptions, examples)
+- Every route is registered in `src/config/openapi-routes.ts` with tags, request/response schemas, and error responses
+- Response schemas are wrapped in the success envelope via `createSuccessResponse()` from `src/schemas/responses.schema.ts`
+- Reusable error responses (400/401/403/404/409/500) from `errorResponses` in the same file
 
 Standard error codes:
 | Code | HTTP Status | When |
