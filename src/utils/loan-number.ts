@@ -1,4 +1,4 @@
-import type { LoanType } from '#generated/prisma/enums.js';
+import type { LoanType } from '@prisma/client';
 
 /**
  * Generates the next loan number for a given tenant, year, and loan type.

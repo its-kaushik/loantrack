@@ -36,12 +36,8 @@ RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" \
     DIRECT_URL="postgresql://dummy:dummy@localhost:5432/dummy" \
     npx prisma generate --schema=prisma/schema.prisma
 
-# Copy compiled output (tsc emits to dist/src/ since rootDir is ".")
+# Copy compiled output
 COPY --from=builder /app/dist ./dist
-
-# The generated Prisma client (./generated/prisma/) is resolved at runtime via
-# package.json "imports" field: #generated/prisma/* → ./generated/prisma/*
-# It was already generated above by prisma generate into ./generated/prisma/
 
 # Non-root user
 RUN addgroup -g 1001 -S nodejs && \
@@ -50,4 +46,4 @@ USER nodejs
 
 EXPOSE 3000
 
-CMD ["node", "dist/src/server.js"]
+CMD ["node", "dist/server.js"]

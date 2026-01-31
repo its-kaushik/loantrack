@@ -1,4 +1,4 @@
-import { Decimal } from 'decimal.js';
+import Decimal from 'decimal.js';
 import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/errors.js';
 import { parseDate, toDateString, addDays } from '../utils/date.js';

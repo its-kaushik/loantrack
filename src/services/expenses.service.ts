@@ -1,7 +1,7 @@
 import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/errors.js';
 import { parseDate, toDateString } from '../utils/date.js';
-import type { ExpenseCategory } from '#generated/prisma/enums.js';
+import type { ExpenseCategory } from '@prisma/client';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function formatExpense(e: any) {
