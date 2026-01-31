@@ -9,8 +9,8 @@ COPY prisma.config.ts ./
 
 RUN npm ci
 
-# Prisma generate needs DATABASE_URL at parse time even though it doesn't
-# connect. Use a dummy URL since the real one is only available at runtime.
+# Prisma generate needs DATABASE_URL + DIRECT_URL at parse time even though it
+# doesn't connect. Use dummy URLs since the real ones are only available at runtime.
 RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" \
     DIRECT_URL="postgresql://dummy:dummy@localhost:5432/dummy" \
     npx prisma generate --schema=prisma/schema.prisma
@@ -36,8 +36,12 @@ RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" \
     DIRECT_URL="postgresql://dummy:dummy@localhost:5432/dummy" \
     npx prisma generate --schema=prisma/schema.prisma
 
-# Copy compiled output
+# Copy compiled output (tsc emits to dist/src/ since rootDir is ".")
 COPY --from=builder /app/dist ./dist
+
+# The generated Prisma client (./generated/prisma/) is resolved at runtime via
+# package.json "imports" field: #generated/prisma/* → ./generated/prisma/*
+# It was already generated above by prisma generate into ./generated/prisma/
 
 # Non-root user
 RUN addgroup -g 1001 -S nodejs && \
@@ -46,4 +50,4 @@ USER nodejs
 
 EXPOSE 3000
 
-CMD ["node", "dist/server.js"]
+CMD ["node", "dist/src/server.js"]

@@ -4,7 +4,7 @@ import bcrypt from 'bcrypt';
 import prisma from '../lib/prisma.js';
 import { config } from '../config/index.js';
 import { AppError } from '../utils/errors.js';
-import type { UserRole } from '../generated/prisma/enums.js';
+import type { UserRole } from '#generated/prisma/enums.js';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');

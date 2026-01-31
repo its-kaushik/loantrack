@@ -2,7 +2,7 @@ import bcrypt from 'bcrypt';
 import prisma from '../lib/prisma.js';
 import { config } from '../config/index.js';
 import { AppError } from '../utils/errors.js';
-import type { TenantStatus } from '../generated/prisma/enums.js';
+import type { TenantStatus } from '#generated/prisma/enums.js';
 
 const tenantSelect = {
   id: true,

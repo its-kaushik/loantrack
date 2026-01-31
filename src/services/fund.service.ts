@@ -1,7 +1,7 @@
 import prisma from '../lib/prisma.js';
 import { parseDate, toDateString } from '../utils/date.js';
 import { computeFundSummary, computeCashInHandBottomUp } from '../utils/sql/fund-queries.js';
-import type { FundEntryType } from '../generated/prisma/enums.js';
+import type { FundEntryType } from '#generated/prisma/enums.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function formatFundEntry(e: any) {

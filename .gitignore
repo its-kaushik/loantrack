@@ -36,4 +36,4 @@ npm-debug.log*
 # Testing
 *.tsbuildinfo
 
-/src/generated/prisma
+/generated/prisma

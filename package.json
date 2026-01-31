@@ -2,11 +2,11 @@
   "name": "loantrack-api",
   "version": "1.0.0",
   "type": "module",
-  "main": "dist/server.js",
+  "main": "dist/src/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node dist/src/server.js",
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest --forceExit --detectOpenHandles",
     "test:watch": "NODE_OPTIONS='--experimental-vm-modules' jest --watch --forceExit --detectOpenHandles",
     "lint": "eslint src/",
@@ -21,6 +21,9 @@
   "author": "",
   "license": "ISC",
   "description": "Multi-tenant SaaS platform for loan businesses",
+  "imports": {
+    "#generated/prisma/*": "./generated/prisma/*"
+  },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.4.0",
     "@prisma/adapter-pg": "^7.3.0",
