@@ -12,6 +12,7 @@ RUN npm ci
 # Prisma generate needs DATABASE_URL at parse time even though it doesn't
 # connect. Use a dummy URL since the real one is only available at runtime.
 RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" \
+    DIRECT_URL="postgresql://dummy:dummy@localhost:5432/dummy" \
     npx prisma generate --schema=prisma/schema.prisma
 
 COPY tsconfig.json ./
@@ -28,9 +29,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
-# Copy Prisma schema and regenerate client against production node_modules
+# Copy Prisma schema + config and regenerate client against production node_modules
 COPY --from=builder /app/prisma ./prisma/
+COPY --from=builder /app/prisma.config.ts ./
 RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" \
+    DIRECT_URL="postgresql://dummy:dummy@localhost:5432/dummy" \
     npx prisma generate --schema=prisma/schema.prisma
 
 # Copy compiled output
