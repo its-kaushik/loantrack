@@ -87,6 +87,15 @@ import {
   collectorSummaryResponseSchema,
   loanBookResponseSchema,
 } from '../schemas/dashboard.schema.js';
+import {
+  tenantIdParamSchema,
+  listTenantsQuerySchema,
+  createTenantSchema,
+  tenantResponseSchema,
+  tenantDetailResponseSchema,
+  createTenantResponseSchema,
+  platformStatsResponseSchema,
+} from '../schemas/platform.schema.js';
 
 const bearerAuth = [{ bearerAuth: [] }];
 
@@ -1264,6 +1273,137 @@ registry.registerPath({
     200: {
       description: 'Reconciliation result',
       content: { 'application/json': { schema: createSuccessResponse(reconciliationResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+// ─── Platform Admin Routes ──────────────────────────────────────────────
+
+registry.registerPath({
+  method: 'post',
+  path: '/platform/tenants',
+  tags: ['Platform Admin'],
+  summary: 'Onboard a new tenant with its first admin user',
+  security: bearerAuth,
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: createTenantSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Tenant created with admin user',
+      content: { 'application/json': { schema: createSuccessResponse(createTenantResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/platform/tenants',
+  tags: ['Platform Admin'],
+  summary: 'List all tenants with optional status filter',
+  security: bearerAuth,
+  request: {
+    query: listTenantsQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of tenants',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.literal(true),
+            data: z.array(tenantResponseSchema),
+            pagination: paginationSchema,
+          }),
+        },
+      },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/platform/tenants/{id}',
+  tags: ['Platform Admin'],
+  summary: 'Get tenant detail with aggregate counts',
+  security: bearerAuth,
+  request: {
+    params: tenantIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Tenant detail',
+      content: { 'application/json': { schema: createSuccessResponse(tenantDetailResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/platform/tenants/{id}/suspend',
+  tags: ['Platform Admin'],
+  summary: 'Suspend an active tenant',
+  security: bearerAuth,
+  request: {
+    params: tenantIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Tenant suspended',
+      content: { 'application/json': { schema: createSuccessResponse(tenantResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/platform/tenants/{id}/activate',
+  tags: ['Platform Admin'],
+  summary: 'Reactivate a suspended tenant',
+  security: bearerAuth,
+  request: {
+    params: tenantIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Tenant reactivated',
+      content: { 'application/json': { schema: createSuccessResponse(tenantResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/platform/stats',
+  tags: ['Platform Admin'],
+  summary: 'Platform-wide aggregate statistics',
+  security: bearerAuth,
+  responses: {
+    200: {
+      description: 'Platform statistics',
+      content: { 'application/json': { schema: createSuccessResponse(platformStatsResponseSchema) } },
     },
     401: errorResponses[401],
     403: errorResponses[403],
