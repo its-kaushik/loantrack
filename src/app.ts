@@ -2,7 +2,7 @@ import 'express-async-errors';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import Decimal from 'decimal.js';
+import { Decimal } from 'decimal.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { config } from './config/index.js';
 import { apiLimiter, authLimiter } from './middleware/rate-limit.js';
