@@ -50,6 +50,8 @@ export function validate(schemas: ValidationSchemas) {
             source: 'query',
           })),
         );
+      } else {
+        req.query = result.data as any;
       }
     }
 

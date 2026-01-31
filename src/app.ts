@@ -6,6 +6,7 @@ import { errorHandler } from './middleware/error-handler.js';
 import { config } from './config/index.js';
 import authRoutes from './routes/auth.routes.js';
 import usersRoutes from './routes/users.routes.js';
+import customersRoutes from './routes/customers.routes.js';
 import docsRoutes from './routes/docs.routes.js';
 
 // Configure Decimal.js rounding globally before any financial logic executes.
@@ -31,6 +32,7 @@ if (config.isDev || config.isTest) {
 // API routes
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', usersRoutes);
+app.use('/api/v1/customers', customersRoutes);
 
 // Global error handler (must be last)
 app.use(errorHandler);

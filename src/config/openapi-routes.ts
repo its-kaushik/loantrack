@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { registry } from './openapi.js';
 import { createSuccessResponse, errorResponses } from '../schemas/responses.schema.js';
 import {
@@ -17,6 +18,16 @@ import {
   userResponseSchema,
   usersListResponseSchema,
 } from '../schemas/user.schema.js';
+import {
+  customerIdParamSchema,
+  listCustomersQuerySchema,
+  createCustomerSchema,
+  updateCustomerSchema,
+  customerResponseSchema,
+  customerDetailResponseSchema,
+  customerLoansListResponseSchema,
+  paginationSchema,
+} from '../schemas/customer.schema.js';
 
 const bearerAuth = [{ bearerAuth: [] }];
 
@@ -220,6 +231,146 @@ registry.registerPath({
     200: {
       description: 'Password reset',
       content: { 'application/json': { schema: createSuccessResponse(messageResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+// ─── Customers Routes ──────────────────────────────────────────────
+
+registry.registerPath({
+  method: 'get',
+  path: '/customers',
+  tags: ['Customers'],
+  summary: 'List customers with search, filters, and pagination',
+  security: bearerAuth,
+  request: {
+    query: listCustomersQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of customers',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.literal(true),
+            data: z.array(customerResponseSchema),
+            pagination: paginationSchema,
+          }),
+        },
+      },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/customers',
+  tags: ['Customers'],
+  summary: 'Create a new customer',
+  security: bearerAuth,
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: createCustomerSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Customer created',
+      content: { 'application/json': { schema: createSuccessResponse(customerResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/customers/{id}',
+  tags: ['Customers'],
+  summary: 'Get customer detail with guarantor warnings',
+  security: bearerAuth,
+  request: {
+    params: customerIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Customer detail',
+      content: { 'application/json': { schema: createSuccessResponse(customerDetailResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'put',
+  path: '/customers/{id}',
+  tags: ['Customers'],
+  summary: 'Update a customer',
+  security: bearerAuth,
+  request: {
+    params: customerIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: updateCustomerSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Customer updated',
+      content: { 'application/json': { schema: createSuccessResponse(customerResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/customers/{id}/loans',
+  tags: ['Customers'],
+  summary: 'List loans for a customer',
+  security: bearerAuth,
+  request: {
+    params: customerIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Customer loans',
+      content: { 'application/json': { schema: createSuccessResponse(customerLoansListResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/customers/{id}/clear-defaulter',
+  tags: ['Customers'],
+  summary: 'Clear defaulter flag on a customer',
+  security: bearerAuth,
+  request: {
+    params: customerIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Defaulter flag cleared',
+      content: { 'application/json': { schema: createSuccessResponse(customerResponseSchema) } },
     },
     400: errorResponses[400],
     401: errorResponses[401],

@@ -12,6 +12,7 @@ interface PaginatedResponse<T> {
     page: number;
     limit: number;
     total: number;
+    totalPages: number;
   };
 }
 
@@ -25,6 +26,13 @@ export function sendPaginated<T>(
   data: T[],
   pagination: { page: number; limit: number; total: number },
 ): void {
-  const body: PaginatedResponse<T> = { success: true, data, pagination };
+  const body: PaginatedResponse<T> = {
+    success: true,
+    data,
+    pagination: {
+      ...pagination,
+      totalPages: Math.ceil(pagination.total / pagination.limit),
+    },
+  };
   res.json(body);
 }
