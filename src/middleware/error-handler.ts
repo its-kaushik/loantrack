@@ -19,6 +19,20 @@ export function errorHandler(
     return;
   }
 
+  // Handle body-parser errors (payload too large, malformed JSON)
+  const httpErr = err as Error & { status?: number; type?: string };
+  if (httpErr.status && httpErr.status >= 400 && httpErr.status < 500) {
+    res.status(httpErr.status).json({
+      success: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: httpErr.message,
+        details: [],
+      },
+    });
+    return;
+  }
+
   // Log unexpected errors in non-test environments
   if (process.env['NODE_ENV'] !== 'test') {
     console.error('Unhandled error:', err);

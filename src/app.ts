@@ -1,9 +1,11 @@
 import 'express-async-errors';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import Decimal from 'decimal.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { config } from './config/index.js';
+import { apiLimiter, authLimiter } from './middleware/rate-limit.js';
 import authRoutes from './routes/auth.routes.js';
 import usersRoutes from './routes/users.routes.js';
 import customersRoutes from './routes/customers.routes.js';
@@ -23,9 +25,30 @@ Decimal.set({ rounding: Decimal.ROUND_HALF_UP });
 
 const app = express();
 
-// Core middleware
-app.use(cors());
-app.use(express.json());
+// Trust the first reverse proxy (Railway, AWS ALB, etc.) so that req.ip
+// reflects the real client IP from X-Forwarded-For, not the proxy's IP.
+app.set('trust proxy', 1);
+
+// Security headers
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// CORS
+app.use(
+  cors({
+    origin: config.cors.origins,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
+  }),
+);
+
+// Body parser with size limit
+app.use(express.json({ limit: '1mb' }));
+
+// Rate limiting
+app.use('/api/v1/auth/login', authLimiter);
+app.use('/api/v1/auth/refresh', authLimiter);
+app.use('/api/v1/', apiLimiter);
 
 // Health check (raw response — not wrapped in envelope, it's an infra probe)
 app.get('/health', (_req, res) => {

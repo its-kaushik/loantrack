@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: loantrack
+      POSTGRES_PASSWORD: loantrack
+      POSTGRES_DB: loantrack
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loantrack"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build:
+      context: .
+      target: builder
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://loantrack:loantrack@db:5432/loantrack"
+    entrypoint: ["sh", "-c", "npx prisma migrate deploy && npx tsx prisma/seed.ts"]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgresql://loantrack:loantrack@db:5432/loantrack"
+
+volumes:
+  pgdata:

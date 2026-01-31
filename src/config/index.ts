@@ -10,6 +10,9 @@ const env = cleanEnv(process.env, {
   PORT: port({ default: 3000 }),
   NODE_ENV: str({ choices: ['development', 'test', 'production'], default: 'development' }),
   BCRYPT_ROUNDS: num({ default: 12, desc: 'bcrypt hashing rounds (minimum 12)' }),
+  CORS_ORIGINS: str({ default: '*', desc: 'Comma-separated allowed origins' }),
+  RATE_LIMIT_WINDOW_MS: num({ default: 60000, desc: 'Rate limit window in ms' }),
+  RATE_LIMIT_MAX: num({ default: 100, desc: 'Max requests per window' }),
 });
 
 export const config = {
@@ -32,5 +35,14 @@ export const config = {
 
   bcrypt: {
     rounds: env.BCRYPT_ROUNDS,
+  },
+
+  cors: {
+    origins: env.CORS_ORIGINS === '*' ? '*' as const : env.CORS_ORIGINS.split(',').map((s) => s.trim()),
+  },
+
+  rateLimit: {
+    windowMs: env.RATE_LIMIT_WINDOW_MS,
+    max: env.RATE_LIMIT_MAX,
   },
 } as const;
