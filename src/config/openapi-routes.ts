@@ -28,6 +28,20 @@ import {
   customerLoansListResponseSchema,
   paginationSchema,
 } from '../schemas/customer.schema.js';
+import {
+  loanIdParamSchema,
+  listLoansQuerySchema,
+  listLoanTransactionsQuerySchema,
+  createMonthlyLoanSchema,
+  loanResponseSchema,
+  monthlyLoanDetailResponseSchema,
+  loanTransactionResponseSchema,
+  paymentStatusResponseSchema,
+} from '../schemas/loan.schema.js';
+import {
+  createTransactionSchema,
+  transactionResponseSchema,
+} from '../schemas/transaction.schema.js';
 
 const bearerAuth = [{ bearerAuth: [] }];
 
@@ -376,5 +390,177 @@ registry.registerPath({
     401: errorResponses[401],
     403: errorResponses[403],
     404: errorResponses[404],
+  },
+});
+
+// ─── Loans Routes ───────────────────────────────────────────────
+
+registry.registerPath({
+  method: 'post',
+  path: '/loans',
+  tags: ['Loans'],
+  summary: 'Disburse a new monthly loan',
+  security: bearerAuth,
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: createMonthlyLoanSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Loan created',
+      content: { 'application/json': { schema: createSuccessResponse(monthlyLoanDetailResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/loans',
+  tags: ['Loans'],
+  summary: 'List loans with filters and pagination',
+  security: bearerAuth,
+  request: {
+    query: listLoansQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of loans',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.literal(true),
+            data: z.array(loanResponseSchema),
+            pagination: paginationSchema,
+          }),
+        },
+      },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/loans/{id}',
+  tags: ['Loans'],
+  summary: 'Get loan detail with computed fields',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Loan detail',
+      content: { 'application/json': { schema: createSuccessResponse(monthlyLoanDetailResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/loans/{id}/transactions',
+  tags: ['Loans'],
+  summary: 'List transactions for a loan',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+    query: listLoanTransactionsQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of loan transactions',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.literal(true),
+            data: z.array(loanTransactionResponseSchema),
+            pagination: paginationSchema,
+          }),
+        },
+      },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/loans/{id}/payment-status',
+  tags: ['Loans'],
+  summary: 'Get month-by-month payment status for a loan',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Payment status with cycles',
+      content: { 'application/json': { schema: createSuccessResponse(paymentStatusResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/loans/{id}/close',
+  tags: ['Loans'],
+  summary: 'Close a fully settled loan',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Loan closed',
+      content: { 'application/json': { schema: createSuccessResponse(monthlyLoanDetailResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
+  },
+});
+
+// ─── Transactions Routes ────────────────────────────────────────
+
+registry.registerPath({
+  method: 'post',
+  path: '/transactions',
+  tags: ['Transactions'],
+  summary: 'Record a transaction (interest payment or principal return)',
+  security: bearerAuth,
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: createTransactionSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Transaction(s) created',
+      content: { 'application/json': { schema: createSuccessResponse(z.array(transactionResponseSchema)) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
   },
 });

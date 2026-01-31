@@ -7,6 +7,8 @@ import { config } from './config/index.js';
 import authRoutes from './routes/auth.routes.js';
 import usersRoutes from './routes/users.routes.js';
 import customersRoutes from './routes/customers.routes.js';
+import loansRoutes from './routes/loans.routes.js';
+import transactionsRoutes from './routes/transactions.routes.js';
 import docsRoutes from './routes/docs.routes.js';
 
 // Configure Decimal.js rounding globally before any financial logic executes.
@@ -33,6 +35,8 @@ if (config.isDev || config.isTest) {
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', usersRoutes);
 app.use('/api/v1/customers', customersRoutes);
+app.use('/api/v1/loans', loansRoutes);
+app.use('/api/v1/transactions', transactionsRoutes);
 
 // Global error handler (must be last)
 app.use(errorHandler);
