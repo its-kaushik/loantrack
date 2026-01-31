@@ -10,6 +10,7 @@ import {
   createLoanSchema,
   cancelLoanSchema,
 } from '../schemas/loan.schema.js';
+import { migrateLoanSchema } from '../schemas/migration.schema.js';
 import {
   imposePenaltySchema,
   listPenaltiesQuerySchema,
@@ -30,6 +31,14 @@ router.post(
   requireRole('ADMIN'),
   validate({ body: createLoanSchema }),
   loansController.createLoanHandler,
+);
+
+// ADMIN can migrate pre-existing loans
+router.post(
+  '/migrate',
+  requireRole('ADMIN'),
+  validate({ body: migrateLoanSchema }),
+  loansController.migrateLoanHandler,
 );
 
 // ADMIN + COLLECTOR can read

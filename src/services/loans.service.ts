@@ -18,6 +18,7 @@ const loanListSelect = {
   status: true,
   guarantorId: true,
   guarantor: { select: { fullName: true } },
+  isMigrated: true,
   createdAt: true,
 } as const;
 
@@ -28,6 +29,7 @@ const loanDetailSelect = {
   advanceInterestAmount: true,
   expectedMonths: true,
   monthlyDueDay: true,
+  lastInterestPaidThrough: true,
   collateralDescription: true,
   collateralEstimatedValue: true,
   notes: true,
@@ -93,6 +95,7 @@ function formatLoanListItem(loan: Record<string, unknown>) {
     status: l.status,
     guarantorId: l.guarantorId,
     guarantorName: l.guarantor?.fullName ?? null,
+    isMigrated: l.isMigrated ?? false,
     createdAt: l.createdAt.toISOString(),
   };
 }
@@ -102,6 +105,7 @@ function formatLoanDetail(loan: Record<string, unknown>) {
   const l = loan as any;
   return {
     ...formatLoanListItem(l),
+    lastInterestPaidThrough: l.lastInterestPaidThrough ? toDateString(l.lastInterestPaidThrough) : null,
     remainingPrincipal: Number(l.remainingPrincipal),
     billingPrincipal: Number(l.billingPrincipal),
     advanceInterestAmount: Number(l.advanceInterestAmount),
@@ -584,6 +588,17 @@ async function computeDueDateInfo(
     cycleYear++;
   }
 
+  // For migrated loans, skip cycles already settled before migration
+  if (loan.lastInterestPaidThrough) {
+    const lipYear = loan.lastInterestPaidThrough.getUTCFullYear();
+    const lipMonth = loan.lastInterestPaidThrough.getUTCMonth() + 1;
+    if (lipYear > cycleYear || (lipYear === cycleYear && lipMonth >= cycleMonth)) {
+      cycleYear = lipYear;
+      cycleMonth = lipMonth + 1;
+      if (cycleMonth > 12) { cycleMonth = 1; cycleYear++; }
+    }
+  }
+
   const todayStr = today();
   const todayDate = parseDate(todayStr);
   const todayYear = todayDate.getUTCFullYear();
@@ -698,6 +713,9 @@ export async function getPaymentStatus(tenantId: string, loanId: string) {
       monthlyDueDay: true,
       principalAmount: true,
       interestRate: true,
+      billingPrincipal: true,
+      lastInterestPaidThrough: true,
+      isMigrated: true,
       status: true,
       closureDate: true,
       termDays: true,
@@ -741,6 +759,17 @@ export async function getPaymentStatus(tenantId: string, loanId: string) {
   if (cycleMonth > 12) {
     cycleMonth = 1;
     cycleYear++;
+  }
+
+  // For migrated loans, skip cycles already settled before migration
+  if (loan.lastInterestPaidThrough) {
+    const lipYear = loan.lastInterestPaidThrough.getUTCFullYear();
+    const lipMonth = loan.lastInterestPaidThrough.getUTCMonth() + 1;
+    if (lipYear > cycleYear || (lipYear === cycleYear && lipMonth >= cycleMonth)) {
+      cycleYear = lipYear;
+      cycleMonth = lipMonth + 1;
+      if (cycleMonth > 12) { cycleMonth = 1; cycleYear++; }
+    }
   }
 
   const cycles = [];
@@ -1002,6 +1031,11 @@ async function getBillingPrincipalForCycle(
     return Number(lastReturn.remainingPrincipalAfter);
   }
 
+  // For migrated loans, use billingPrincipal (set to remaining_principal at migration)
+  // For native loans, use principalAmount (original amount = initial billing principal)
+  if (loan.isMigrated && loan.billingPrincipal != null) {
+    return Number(loan.billingPrincipal);
+  }
   return Number(loan.principalAmount);
 }
 

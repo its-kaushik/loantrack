@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import * as loansService from '../services/loans.service.js';
+import * as migrationService from '../services/migration.service.js';
 import { sendSuccess, sendPaginated } from '../utils/response.js';
 
 export async function createLoanHandler(req: Request, res: Response) {
@@ -56,4 +57,11 @@ export async function cancelLoanHandler(req: Request, res: Response) {
   const loanId = req.params.id as string;
   const loan = await loansService.cancelLoan(req.tenantId!, loanId, req.user!.userId, req.body.cancellation_reason);
   sendSuccess(res, loan);
+}
+
+export async function migrateLoanHandler(req: Request, res: Response) {
+  const loan = req.body.loan_type === 'DAILY'
+    ? await migrationService.migrateDailyLoan(req.tenantId!, req.user!.userId, req.body)
+    : await migrationService.migrateMonthlyLoan(req.tenantId!, req.user!.userId, req.body);
+  sendSuccess(res, loan, 201);
 }

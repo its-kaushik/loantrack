@@ -41,6 +41,7 @@ import {
   paymentStatusResponseSchema,
   dailyPaymentStatusResponseSchema,
 } from '../schemas/loan.schema.js';
+import { migrateLoanSchema } from '../schemas/migration.schema.js';
 import {
   createTransactionSchema,
   transactionResponseSchema,
@@ -454,6 +455,30 @@ registry.registerPath({
   responses: {
     201: {
       description: 'Loan created',
+      content: { 'application/json': { schema: createSuccessResponse(z.union([monthlyLoanDetailResponseSchema, dailyLoanDetailResponseSchema])) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/loans/migrate',
+  tags: ['Loans'],
+  summary: 'Migrate a pre-existing loan (day-one import)',
+  security: bearerAuth,
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: migrateLoanSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Loan migrated',
       content: { 'application/json': { schema: createSuccessResponse(z.union([monthlyLoanDetailResponseSchema, dailyLoanDetailResponseSchema])) } },
     },
     400: errorResponses[400],

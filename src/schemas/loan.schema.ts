@@ -107,12 +107,14 @@ export const loanResponseSchema = z
     status: z.string().openapi({ example: 'ACTIVE' }),
     guarantorId: z.string().uuid().nullable().openapi({ example: null }),
     guarantorName: z.string().nullable().openapi({ example: null }),
+    isMigrated: z.boolean().openapi({ example: false }),
     createdAt: z.string().openapi({ example: '2026-01-15T10:30:00.000Z' }),
   })
   .openapi('LoanResponse');
 
 export const monthlyLoanDetailResponseSchema = loanResponseSchema
   .extend({
+    lastInterestPaidThrough: z.string().nullable().openapi({ example: '2026-02-15' }),
     remainingPrincipal: z.number().openapi({ example: 100000 }),
     billingPrincipal: z.number().openapi({ example: 100000 }),
     advanceInterestAmount: z.number().openapi({ example: 2500 }),
