@@ -63,6 +63,29 @@ import {
   penaltyResponseSchema,
   waiverResponseSchema,
 } from '../schemas/penalty.schema.js';
+import {
+  createExpenseSchema,
+  updateExpenseSchema,
+  expenseIdParamSchema,
+  listExpensesQuerySchema,
+  expenseResponseSchema,
+} from '../schemas/expense.schema.js';
+import {
+  createFundEntrySchema,
+  listFundEntriesQuerySchema,
+  fundEntryResponseSchema,
+  fundSummaryResponseSchema,
+  reconciliationResponseSchema,
+} from '../schemas/fund.schema.js';
+import {
+  dateRangeQuerySchema,
+  todaySummaryResponseSchema,
+  overdueLoansResponseSchema,
+  defaultersResponseSchema,
+  profitLossResponseSchema,
+  collectorSummaryResponseSchema,
+  loanBookResponseSchema,
+} from '../schemas/dashboard.schema.js';
 
 const bearerAuth = [{ bearerAuth: [] }];
 
@@ -913,5 +936,311 @@ registry.registerPath({
     401: errorResponses[401],
     403: errorResponses[403],
     404: errorResponses[404],
+  },
+});
+
+// ─── Dashboard Routes ─────────────────────────────────────────────────
+
+registry.registerPath({
+  method: 'get',
+  path: '/dashboard/today',
+  tags: ['Dashboard'],
+  summary: "Today's summary (collections, overdue, pending)",
+  security: bearerAuth,
+  responses: {
+    200: {
+      description: "Today's summary",
+      content: { 'application/json': { schema: createSuccessResponse(todaySummaryResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/dashboard/overdue',
+  tags: ['Dashboard'],
+  summary: 'Overdue loans (daily and monthly)',
+  security: bearerAuth,
+  responses: {
+    200: {
+      description: 'Overdue loans',
+      content: { 'application/json': { schema: createSuccessResponse(overdueLoansResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/dashboard/defaulters',
+  tags: ['Dashboard'],
+  summary: 'Defaulted and written-off loans',
+  security: bearerAuth,
+  responses: {
+    200: {
+      description: 'Defaulters list',
+      content: { 'application/json': { schema: createSuccessResponse(defaultersResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/dashboard/fund-summary',
+  tags: ['Dashboard'],
+  summary: 'Capital overview and fund metrics',
+  security: bearerAuth,
+  responses: {
+    200: {
+      description: 'Fund summary',
+      content: { 'application/json': { schema: createSuccessResponse(fundSummaryResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+// ─── Reports Routes ──────────────────────────────────────────────────
+
+registry.registerPath({
+  method: 'get',
+  path: '/reports/profit-loss',
+  tags: ['Reports'],
+  summary: 'Profit & Loss for date range',
+  security: bearerAuth,
+  request: {
+    query: dateRangeQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'P&L report',
+      content: { 'application/json': { schema: createSuccessResponse(profitLossResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/reports/collector-summary',
+  tags: ['Reports'],
+  summary: 'Per-collector performance for date range',
+  security: bearerAuth,
+  request: {
+    query: dateRangeQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Collector summary',
+      content: { 'application/json': { schema: createSuccessResponse(collectorSummaryResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/reports/loan-book',
+  tags: ['Reports'],
+  summary: 'Full portfolio snapshot',
+  security: bearerAuth,
+  responses: {
+    200: {
+      description: 'Loan book',
+      content: { 'application/json': { schema: createSuccessResponse(loanBookResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+// ─── Expenses Routes ─────────────────────────────────────────────────
+
+registry.registerPath({
+  method: 'get',
+  path: '/expenses',
+  tags: ['Expenses'],
+  summary: 'List expenses with filters',
+  security: bearerAuth,
+  request: {
+    query: listExpensesQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of expenses',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.literal(true),
+            data: z.array(expenseResponseSchema),
+            pagination: paginationSchema,
+          }),
+        },
+      },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/expenses',
+  tags: ['Expenses'],
+  summary: 'Record a new expense',
+  security: bearerAuth,
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: createExpenseSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Expense created',
+      content: { 'application/json': { schema: createSuccessResponse(expenseResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'put',
+  path: '/expenses/{id}',
+  tags: ['Expenses'],
+  summary: 'Update an expense',
+  security: bearerAuth,
+  request: {
+    params: expenseIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: updateExpenseSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Expense updated',
+      content: { 'application/json': { schema: createSuccessResponse(expenseResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/expenses/{id}/delete',
+  tags: ['Expenses'],
+  summary: 'Soft-delete an expense',
+  security: bearerAuth,
+  request: {
+    params: expenseIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Expense deleted',
+      content: { 'application/json': { schema: createSuccessResponse(messageResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+// ─── Fund Management Routes ──────────────────────────────────────────
+
+registry.registerPath({
+  method: 'get',
+  path: '/fund/entries',
+  tags: ['Fund Management'],
+  summary: 'List fund entries (injections/withdrawals)',
+  security: bearerAuth,
+  request: {
+    query: listFundEntriesQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of fund entries',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.literal(true),
+            data: z.array(fundEntryResponseSchema),
+            pagination: paginationSchema,
+          }),
+        },
+      },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/fund/entries',
+  tags: ['Fund Management'],
+  summary: 'Record a fund injection or withdrawal',
+  security: bearerAuth,
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: createFundEntrySchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Fund entry created',
+      content: { 'application/json': { schema: createSuccessResponse(fundEntryResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/fund/summary',
+  tags: ['Fund Management'],
+  summary: 'Current fund status with all 8 metrics',
+  security: bearerAuth,
+  responses: {
+    200: {
+      description: 'Fund summary',
+      content: { 'application/json': { schema: createSuccessResponse(fundSummaryResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/fund/reconciliation',
+  tags: ['Fund Management'],
+  summary: 'Cash in Hand reconciliation (dual-method)',
+  security: bearerAuth,
+  responses: {
+    200: {
+      description: 'Reconciliation result',
+      content: { 'application/json': { schema: createSuccessResponse(reconciliationResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
   },
 });

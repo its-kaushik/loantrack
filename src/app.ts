@@ -10,6 +10,10 @@ import customersRoutes from './routes/customers.routes.js';
 import loansRoutes from './routes/loans.routes.js';
 import transactionsRoutes from './routes/transactions.routes.js';
 import penaltiesRoutes from './routes/penalties.routes.js';
+import dashboardRoutes from './routes/dashboard.routes.js';
+import reportsRoutes from './routes/reports.routes.js';
+import expensesRoutes from './routes/expenses.routes.js';
+import fundRoutes from './routes/fund.routes.js';
 import docsRoutes from './routes/docs.routes.js';
 
 // Configure Decimal.js rounding globally before any financial logic executes.
@@ -39,6 +43,10 @@ app.use('/api/v1/customers', customersRoutes);
 app.use('/api/v1/loans', loansRoutes);
 app.use('/api/v1/transactions', transactionsRoutes);
 app.use('/api/v1/penalties', penaltiesRoutes);
+app.use('/api/v1/dashboard', dashboardRoutes);
+app.use('/api/v1/reports', reportsRoutes);
+app.use('/api/v1/expenses', expensesRoutes);
+app.use('/api/v1/fund', fundRoutes);
 
 // Global error handler (must be last)
 app.use(errorHandler);
