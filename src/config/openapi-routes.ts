@@ -51,6 +51,17 @@ import {
   pendingTransactionsQuerySchema,
   transactionDetailResponseSchema,
 } from '../schemas/transaction.schema.js';
+import {
+  penaltyIdParamSchema,
+  imposePenaltySchema,
+  waivePenaltySchema,
+  waiveInterestSchema,
+  listPenaltiesQuerySchema,
+  listWaiversQuerySchema,
+  penaltyCalculationResponseSchema,
+  penaltyResponseSchema,
+  waiverResponseSchema,
+} from '../schemas/penalty.schema.js';
 
 const bearerAuth = [{ bearerAuth: [] }];
 
@@ -696,5 +707,140 @@ registry.registerPath({
     403: errorResponses[403],
     404: errorResponses[404],
     409: errorResponses[409],
+  },
+});
+
+// ─── Penalties Routes ──────────────────────────────────────────────
+
+registry.registerPath({
+  method: 'post',
+  path: '/loans/{id}/penalties',
+  tags: ['Penalties'],
+  summary: 'Impose a penalty on an overdue daily loan (ADMIN only)',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: imposePenaltySchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Penalty imposed',
+      content: { 'application/json': { schema: createSuccessResponse(penaltyCalculationResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/loans/{id}/penalties',
+  tags: ['Penalties'],
+  summary: 'List penalties for a loan (ADMIN only)',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+    query: listPenaltiesQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of penalties',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.literal(true),
+            data: z.array(penaltyResponseSchema),
+            pagination: paginationSchema,
+          }),
+        },
+      },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/penalties/{id}/waive',
+  tags: ['Penalties'],
+  summary: 'Waive a penalty (full or partial, ADMIN only)',
+  security: bearerAuth,
+  request: {
+    params: penaltyIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: waivePenaltySchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Penalty waived',
+      content: { 'application/json': { schema: createSuccessResponse(penaltyResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/loans/{id}/waive-interest',
+  tags: ['Penalties'],
+  summary: 'Waive interest for a monthly loan cycle (ADMIN only)',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: waiveInterestSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Interest waiver created',
+      content: { 'application/json': { schema: createSuccessResponse(waiverResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/loans/{id}/waivers',
+  tags: ['Penalties'],
+  summary: 'List waivers for a loan (ADMIN only)',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+    query: listWaiversQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of waivers',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.literal(true),
+            data: z.array(waiverResponseSchema),
+            pagination: paginationSchema,
+          }),
+        },
+      },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
   },
 });

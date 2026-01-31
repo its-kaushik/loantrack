@@ -9,6 +9,7 @@ import usersRoutes from './routes/users.routes.js';
 import customersRoutes from './routes/customers.routes.js';
 import loansRoutes from './routes/loans.routes.js';
 import transactionsRoutes from './routes/transactions.routes.js';
+import penaltiesRoutes from './routes/penalties.routes.js';
 import docsRoutes from './routes/docs.routes.js';
 
 // Configure Decimal.js rounding globally before any financial logic executes.
@@ -37,6 +38,7 @@ app.use('/api/v1/users', usersRoutes);
 app.use('/api/v1/customers', customersRoutes);
 app.use('/api/v1/loans', loansRoutes);
 app.use('/api/v1/transactions', transactionsRoutes);
+app.use('/api/v1/penalties', penaltiesRoutes);
 
 // Global error handler (must be last)
 app.use(errorHandler);

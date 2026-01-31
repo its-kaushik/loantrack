@@ -856,6 +856,14 @@ export async function closeLoan(tenantId: string, loanId: string, closedById: st
     if (totalCollected.lt(totalRepayment)) {
       throw AppError.badRequest('Cannot close loan: total collected is less than total repayment amount');
     }
+
+    // Check for outstanding penalties
+    const outstandingPenalties = await prisma.penalty.count({
+      where: { loanId, tenantId, status: { in: ['PENDING', 'PARTIALLY_PAID'] } },
+    });
+    if (outstandingPenalties > 0) {
+      throw AppError.badRequest('Cannot close loan with outstanding penalties');
+    }
   } else {
     // MONTHLY: existing logic
     const remaining = new Decimal(loan.remainingPrincipal!.toString());

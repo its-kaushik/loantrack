@@ -9,7 +9,14 @@ import {
   listLoanTransactionsQuerySchema,
   createLoanSchema,
 } from '../schemas/loan.schema.js';
+import {
+  imposePenaltySchema,
+  listPenaltiesQuerySchema,
+  waiveInterestSchema,
+  listWaiversQuerySchema,
+} from '../schemas/penalty.schema.js';
 import * as loansController from '../controllers/loans.controller.js';
+import * as penaltiesController from '../controllers/penalties.controller.js';
 
 const router = Router();
 
@@ -60,6 +67,40 @@ router.patch(
   requireRole('ADMIN'),
   validate({ params: loanIdParamSchema }),
   loansController.closeLoanHandler,
+);
+
+// ─── Penalty & Waiver Routes ───────────────────────────────────────────────
+
+// ADMIN only can impose penalties
+router.post(
+  '/:id/penalties',
+  requireRole('ADMIN'),
+  validate({ params: loanIdParamSchema, body: imposePenaltySchema }),
+  penaltiesController.imposePenaltyHandler,
+);
+
+// ADMIN only can list penalties
+router.get(
+  '/:id/penalties',
+  requireRole('ADMIN'),
+  validate({ params: loanIdParamSchema, query: listPenaltiesQuerySchema }),
+  penaltiesController.listPenaltiesHandler,
+);
+
+// ADMIN only can waive interest
+router.post(
+  '/:id/waive-interest',
+  requireRole('ADMIN'),
+  validate({ params: loanIdParamSchema, body: waiveInterestSchema }),
+  penaltiesController.waiveInterestHandler,
+);
+
+// ADMIN only can list waivers
+router.get(
+  '/:id/waivers',
+  requireRole('ADMIN'),
+  validate({ params: loanIdParamSchema, query: listWaiversQuerySchema }),
+  penaltiesController.listWaiversHandler,
 );
 
 export default router;

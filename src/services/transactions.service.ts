@@ -11,10 +11,11 @@ export async function recordTransaction(
   callerRole: 'ADMIN' | 'COLLECTOR',
   data: {
     loan_id: string;
-    transaction_type: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION';
+    transaction_type: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION' | 'PENALTY';
     amount: number;
     transaction_date: string;
     effective_date?: string;
+    penalty_id?: string;
     notes?: string;
   },
 ) {
@@ -55,6 +56,13 @@ export async function recordTransaction(
         throw AppError.badRequest('DAILY_COLLECTION is only for DAILY loans');
       }
       return handleDailyCollection(tx, tenantId, createdById, loan, data, approvalStatus, isAutoApproved);
+    }
+
+    if (data.transaction_type === 'PENALTY') {
+      if (loan.loanType !== 'DAILY') {
+        throw AppError.badRequest('PENALTY payments are only for DAILY loans');
+      }
+      return handlePenaltyPayment(tx, tenantId, createdById, loan, data, approvalStatus, isAutoApproved);
     }
 
     if (loan.loanType !== 'MONTHLY') {
@@ -324,6 +332,113 @@ async function handleDailyCollection(
   return [formatTransaction(txn)];
 }
 
+// ─── Penalty Payment Handler ─────────────────────────────────────────────
+
+async function handlePenaltyPayment(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  tenantId: string,
+  createdById: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loan: any,
+  data: { amount: number; transaction_date: string; penalty_id?: string; notes?: string },
+  approvalStatus: string,
+  isAutoApproved: boolean,
+) {
+  const transactionDate = parseDate(data.transaction_date);
+  const amount = new Decimal(data.amount);
+
+  // Resolve penalty: explicit penalty_id or auto-select oldest unpaid
+  let penalty;
+  if (data.penalty_id) {
+    penalty = await tx.penalty.findFirst({
+      where: { id: data.penalty_id, tenantId },
+    });
+    if (!penalty) {
+      throw AppError.notFound('Penalty not found');
+    }
+    if (penalty.loanId !== loan.id) {
+      throw AppError.badRequest('Penalty does not belong to this loan');
+    }
+  } else {
+    penalty = await tx.penalty.findFirst({
+      where: {
+        loanId: loan.id,
+        tenantId,
+        status: { in: ['PENDING', 'PARTIALLY_PAID'] },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!penalty) {
+      throw AppError.badRequest('No unpaid penalties found for this loan');
+    }
+  }
+
+  if (penalty.status === 'PAID' || penalty.status === 'WAIVED') {
+    throw AppError.badRequest(`Cannot pay a ${penalty.status} penalty`);
+  }
+
+  const netPayable = new Decimal(penalty.netPayable.toString());
+  const amountCollected = new Decimal(penalty.amountCollected.toString());
+  const remaining = netPayable.minus(amountCollected);
+
+  if (amount.gt(remaining)) {
+    throw AppError.badRequest(`Amount exceeds remaining penalty balance (max: ${remaining.toNumber()})`);
+  }
+
+  const txn = await tx.transaction.create({
+    data: {
+      tenantId,
+      loanId: loan.id,
+      penaltyId: penalty.id,
+      transactionType: 'PENALTY',
+      amount: amount.toNumber(),
+      transactionDate,
+      approvalStatus,
+      collectedById: createdById,
+      approvedById: isAutoApproved ? createdById : undefined,
+      approvedAt: isAutoApproved ? new Date() : undefined,
+      notes: data.notes,
+    },
+  });
+
+  // Side effects only when auto-approved
+  if (isAutoApproved) {
+    await applyPenaltyPaymentSideEffect(tx, tenantId, penalty.id, amount.toNumber());
+  }
+
+  return [formatTransaction(txn)];
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function applyPenaltyPaymentSideEffect(tx: any, tenantId: string, penaltyId: string, amount: number) {
+  const penalty = await tx.penalty.findFirst({
+    where: { id: penaltyId, tenantId },
+  });
+
+  if (!penalty) return;
+
+  const netPayable = new Decimal(penalty.netPayable.toString());
+  const newCollected = new Decimal(penalty.amountCollected.toString()).plus(new Decimal(amount));
+
+  let newStatus: string;
+  if (newCollected.gte(netPayable)) {
+    newStatus = 'PAID';
+  } else if (newCollected.gt(0)) {
+    newStatus = 'PARTIALLY_PAID';
+  } else {
+    newStatus = 'PENDING';
+  }
+
+  await tx.penalty.update({
+    where: { id: penaltyId },
+    data: {
+      amountCollected: newCollected.toNumber(),
+      status: newStatus as 'PENDING' | 'PARTIALLY_PAID' | 'PAID' | 'WAIVED',
+    },
+  });
+}
+
 // ─── executeSideEffects ──────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -388,6 +503,10 @@ async function executeSideEffects(tx: any, tenantId: string, approvedById: strin
         createdById: approvedById,
       },
     });
+  } else if (transaction.transactionType === 'PENALTY') {
+    if (transaction.penaltyId) {
+      await applyPenaltyPaymentSideEffect(tx, tenantId, transaction.penaltyId, Number(transaction.amount));
+    }
   }
   // INTEREST_PAYMENT — no loan-level side effect
 }
@@ -528,7 +647,7 @@ export async function listTransactions(
   tenantId: string,
   query: {
     approval_status?: 'PENDING' | 'APPROVED' | 'REJECTED';
-    transaction_type?: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION';
+    transaction_type?: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION' | 'PENALTY';
     loan_id?: string;
     collected_by?: string;
     page: number;

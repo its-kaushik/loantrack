@@ -9,9 +9,10 @@ export const createTransactionSchema = z
   .object({
     loan_id: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
     transaction_type: z
-      .enum(['INTEREST_PAYMENT', 'PRINCIPAL_RETURN', 'DAILY_COLLECTION'])
+      .enum(['INTEREST_PAYMENT', 'PRINCIPAL_RETURN', 'DAILY_COLLECTION', 'PENALTY'])
       .openapi({ example: 'INTEREST_PAYMENT' }),
     amount: z.number().positive().openapi({ example: 2500 }),
+    penalty_id: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
     transaction_date: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
@@ -103,6 +104,7 @@ export const listTransactionsQuerySchema = z
       | 'INTEREST_PAYMENT'
       | 'PRINCIPAL_RETURN'
       | 'DAILY_COLLECTION'
+      | 'PENALTY'
       | undefined,
     loan_id: data.loan_id,
     collected_by: data.collected_by,
