@@ -9,6 +9,7 @@ declare global {
         role: UserRole;
       };
       tenantId?: string;
+      idempotencyKey?: string;
     }
   }
 }

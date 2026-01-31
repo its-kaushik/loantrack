@@ -398,15 +398,20 @@ export async function listLoans(
     page: number;
     limit: number;
   },
+  callerRole?: 'ADMIN' | 'COLLECTOR',
 ) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: Record<string, any> = { tenantId };
 
+  if (callerRole === 'COLLECTOR') {
+    // Collectors can only see ACTIVE loans
+    where.status = 'ACTIVE';
+  } else if (query.status) {
+    where.status = query.status;
+  }
+
   if (query.type) {
     where.loanType = query.type;
-  }
-  if (query.status) {
-    where.status = query.status;
   }
   if (query.borrower_id) {
     where.borrowerId = query.borrower_id;

@@ -11,7 +11,7 @@ export async function createLoanHandler(req: Request, res: Response) {
 
 export async function listLoansHandler(req: Request, res: Response) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const result = await loansService.listLoans(req.tenantId!, req.query as any);
+  const result = await loansService.listLoans(req.tenantId!, req.query as any, req.user!.role as 'ADMIN' | 'COLLECTOR');
   sendPaginated(res, result.data, result.pagination);
 }
 

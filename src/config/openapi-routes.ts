@@ -43,6 +43,13 @@ import {
 import {
   createTransactionSchema,
   transactionResponseSchema,
+  bulkCollectionSchema,
+  bulkCollectionResponseSchema,
+  rejectTransactionSchema,
+  transactionIdParamSchema,
+  listTransactionsQuerySchema,
+  pendingTransactionsQuerySchema,
+  transactionDetailResponseSchema,
 } from '../schemas/transaction.schema.js';
 
 const bearerAuth = [{ bearerAuth: [] }];
@@ -546,7 +553,7 @@ registry.registerPath({
   method: 'post',
   path: '/transactions',
   tags: ['Transactions'],
-  summary: 'Record a transaction (interest payment, principal return, or daily collection)',
+  summary: 'Record a transaction (interest payment, principal return, or daily collection). ADMIN auto-approves, COLLECTOR creates PENDING.',
   security: bearerAuth,
   request: {
     body: {
@@ -558,6 +565,131 @@ registry.registerPath({
     201: {
       description: 'Transaction(s) created',
       content: { 'application/json': { schema: createSuccessResponse(z.array(transactionResponseSchema)) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/transactions/bulk',
+  tags: ['Transactions'],
+  summary: 'Bulk daily collections (COLLECTOR only, requires Idempotency-Key header)',
+  security: bearerAuth,
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: bulkCollectionSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Bulk collection results',
+      content: { 'application/json': { schema: createSuccessResponse(bulkCollectionResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/transactions/pending',
+  tags: ['Transactions'],
+  summary: 'List pending transaction approvals (ADMIN only)',
+  security: bearerAuth,
+  request: {
+    query: pendingTransactionsQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of pending transactions',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.literal(true),
+            data: z.array(transactionDetailResponseSchema),
+            pagination: paginationSchema,
+          }),
+        },
+      },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/transactions',
+  tags: ['Transactions'],
+  summary: 'List transactions with filters (ADMIN only)',
+  security: bearerAuth,
+  request: {
+    query: listTransactionsQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of transactions',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.literal(true),
+            data: z.array(transactionDetailResponseSchema),
+            pagination: paginationSchema,
+          }),
+        },
+      },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/transactions/{id}/approve',
+  tags: ['Transactions'],
+  summary: 'Approve a pending transaction (ADMIN only)',
+  security: bearerAuth,
+  request: {
+    params: transactionIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Transaction approved',
+      content: { 'application/json': { schema: createSuccessResponse(transactionDetailResponseSchema) } },
+    },
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/transactions/{id}/reject',
+  tags: ['Transactions'],
+  summary: 'Reject a pending transaction (ADMIN only)',
+  security: bearerAuth,
+  request: {
+    params: transactionIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: rejectTransactionSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Transaction rejected',
+      content: { 'application/json': { schema: createSuccessResponse(transactionDetailResponseSchema) } },
     },
     400: errorResponses[400],
     401: errorResponses[401],
