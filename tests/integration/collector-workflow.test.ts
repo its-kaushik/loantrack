@@ -330,6 +330,41 @@ describe('Collector Transaction Submission — POST /transactions', () => {
     expect(res.status).toBe(400);
   });
 
+  it('Collector creates on DEFAULTED loan → 201, PENDING (recovery payments valid)', async () => {
+    // Create a loan and mark it DEFAULTED
+    const loanRes = await request
+      .post('/api/v1/loans')
+      .set('Authorization', `Bearer ${adminAccessToken}`)
+      .send({
+        loan_type: 'DAILY',
+        borrower_id: borrower1Id,
+        principal_amount: 1000,
+        interest_rate: 10,
+        disbursement_date: '2026-01-01',
+        term_days: 10,
+      });
+    const defaultedLoanId = loanRes.body.data.id;
+
+    // Mark as DEFAULTED directly via prisma
+    await prisma.loan.update({
+      where: { id: defaultedLoanId },
+      data: { status: 'DEFAULTED', defaultedAt: new Date() },
+    });
+
+    const res = await request
+      .post('/api/v1/transactions')
+      .set('Authorization', `Bearer ${collectorAccessToken}`)
+      .send({
+        loan_id: defaultedLoanId,
+        transaction_type: 'DAILY_COLLECTION',
+        amount: 100,
+        transaction_date: '2026-01-03',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data[0].approvalStatus).toBe('PENDING');
+  });
+
   it('DAILY_COLLECTION on MONTHLY loan → 400', async () => {
     const res = await request
       .post('/api/v1/transactions')
