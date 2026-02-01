@@ -170,6 +170,21 @@ export async function recordTransaction(
           },
         });
         createdTransactions.push(formatTransaction(txn));
+
+        // Update lastInterestPaidThrough when auto-approved (only advance forward)
+        if (isAutoApproved) {
+          await tx.loan.updateMany({
+            where: {
+              id: loan.id,
+              tenantId,
+              OR: [
+                { lastInterestPaidThrough: null },
+                { lastInterestPaidThrough: { lt: effectiveDate } },
+              ],
+            },
+            data: { lastInterestPaidThrough: effectiveDate },
+          });
+        }
       } else {
         // Overpayment — auto-split
         const interestPortion = interestDue;
@@ -241,6 +256,19 @@ export async function recordTransaction(
               returnDate: transactionDate,
               createdById,
             },
+          });
+
+          // Update lastInterestPaidThrough (only advance forward)
+          await tx.loan.updateMany({
+            where: {
+              id: loan.id,
+              tenantId,
+              OR: [
+                { lastInterestPaidThrough: null },
+                { lastInterestPaidThrough: { lt: effectiveDate } },
+              ],
+            },
+            data: { lastInterestPaidThrough: effectiveDate },
           });
         }
       }
@@ -540,8 +568,20 @@ async function executeSideEffects(tx: any, tenantId: string, approvedById: strin
         throw AppError.conflict('Loan was modified concurrently, please retry');
       }
     }
+  } else if (transaction.transactionType === 'INTEREST_PAYMENT' && transaction.effectiveDate) {
+    // Update lastInterestPaidThrough (only advance forward)
+    await tx.loan.updateMany({
+      where: {
+        id: loan.id,
+        tenantId,
+        OR: [
+          { lastInterestPaidThrough: null },
+          { lastInterestPaidThrough: { lt: transaction.effectiveDate } },
+        ],
+      },
+      data: { lastInterestPaidThrough: transaction.effectiveDate },
+    });
   }
-  // INTEREST_PAYMENT — no loan-level side effect
 }
 
 // ─── approveTransaction ──────────────────────────────────────────────────

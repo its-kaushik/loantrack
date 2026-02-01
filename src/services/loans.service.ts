@@ -224,6 +224,7 @@ export async function createMonthlyLoan(
         remainingPrincipal: data.principal_amount,
         billingPrincipal: data.principal_amount,
         advanceInterestAmount: advanceInterest.toNumber(),
+        lastInterestPaidThrough: disbursementDate,
         guarantorId: data.guarantor_id,
         collateralDescription: data.collateral_description,
         collateralEstimatedValue: data.collateral_estimated_value,
