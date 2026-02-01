@@ -17,6 +17,7 @@ export async function bulkCollectionHandler(req: Request, res: Response): Promis
   const result = await transactionsService.recordBulkCollections(
     req.tenantId!,
     req.user!.userId,
+    req.user!.role as 'ADMIN' | 'COLLECTOR',
     req.body.collections,
   );
 

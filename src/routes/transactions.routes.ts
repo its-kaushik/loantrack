@@ -29,10 +29,10 @@ router.post(
   transactionsController.createTransactionHandler,
 );
 
-// COLLECTOR only — bulk daily collections with idempotency
+// ADMIN + COLLECTOR — bulk daily collections with idempotency
 router.post(
   '/bulk',
-  requireRole('COLLECTOR'),
+  requireRole('ADMIN', 'COLLECTOR'),
   requireIdempotencyKey(),
   validate({ body: bulkCollectionSchema }),
   transactionsController.bulkCollectionHandler,

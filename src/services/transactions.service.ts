@@ -730,6 +730,7 @@ export async function listTransactions(
 export async function recordBulkCollections(
   tenantId: string,
   collectorId: string,
+  callerRole: 'ADMIN' | 'COLLECTOR',
   collections: Array<{
     loan_id: string;
     amount: number;
@@ -757,7 +758,7 @@ export async function recordBulkCollections(
 
   for (const item of collections) {
     try {
-      const txns = await recordTransaction(tenantId, collectorId, 'COLLECTOR', {
+      const txns = await recordTransaction(tenantId, collectorId, callerRole, {
         loan_id: item.loan_id,
         transaction_type: 'DAILY_COLLECTION',
         amount: item.amount,
