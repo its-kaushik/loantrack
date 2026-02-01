@@ -45,9 +45,9 @@ export async function getTodaySummary(tx: TxClient, tenantId: string, todayStr: 
     totalAmount: toDecimalStr(expectedRow.total_amount),
   };
 
-  // 3. Received collections today
+  // 3. Received collections today (count = unique loans that paid, totalAmount = actual money in)
   const [receivedRow]: [{ count: unknown; total_amount: unknown }] = await tx.$queryRaw`
-    SELECT COUNT(*) AS count, COALESCE(SUM(t.amount), 0) AS total_amount
+    SELECT COUNT(DISTINCT t.loan_id) AS count, COALESCE(SUM(t.amount), 0) AS total_amount
     FROM transactions t
     WHERE t.tenant_id = ${tenantId}::uuid
       AND t.transaction_type = 'DAILY_COLLECTION'
