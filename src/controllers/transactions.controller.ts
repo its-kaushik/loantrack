@@ -78,6 +78,13 @@ export async function rejectTransactionHandler(req: Request, res: Response) {
 
 export async function listTransactionsHandler(req: Request, res: Response) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const result = await transactionsService.listTransactions(req.tenantId!, req.query as any);
+  const query = { ...(req.query as any) };
+
+  // Collectors can only see their own transactions
+  if (req.user!.role === 'COLLECTOR') {
+    query.collected_by = req.user!.userId;
+  }
+
+  const result = await transactionsService.listTransactions(req.tenantId!, query);
   sendPaginated(res, result.data, result.pagination);
 }

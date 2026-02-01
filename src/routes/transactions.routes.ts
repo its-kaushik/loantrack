@@ -46,10 +46,10 @@ router.get(
   transactionsController.listPendingHandler,
 );
 
-// ADMIN only — list all transactions with filters
+// ADMIN + COLLECTOR — list transactions (collectors auto-scoped to own)
 router.get(
   '/',
-  requireRole('ADMIN'),
+  requireRole('ADMIN', 'COLLECTOR'),
   validate({ query: listTransactionsQuerySchema }),
   transactionsController.listTransactionsHandler,
 );

@@ -970,12 +970,16 @@ describe('List Transactions — GET /transactions', () => {
     }
   });
 
-  it('Collector cannot access → 403', async () => {
+  it('Collector can access own transactions only → 200, scoped', async () => {
     const res = await request
       .get('/api/v1/transactions')
       .set('Authorization', `Bearer ${collectorAccessToken}`);
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    // All returned transactions must belong to the collector
+    for (const txn of res.body.data) {
+      expect(txn.collectedById).toBe(collectorUserId);
+    }
   });
 });
 
