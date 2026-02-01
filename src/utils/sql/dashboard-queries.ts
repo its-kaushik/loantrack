@@ -92,7 +92,7 @@ export async function getTodaySummary(tx: TxClient, tenantId: string, todayStr: 
     due_date: unknown;
   }> = await tx.$queryRaw`
     SELECT l.id AS loan_id, c.full_name AS borrower_name,
-      (l.remaining_principal * l.interest_rate / 100) AS interest_amount,
+      (l.billing_principal * l.interest_rate / 100) AS interest_amount,
       (DATE_TRUNC('month', ${todayStr}::date) +
         (LEAST(l.monthly_due_day, EXTRACT(DAY FROM DATE_TRUNC('month', ${todayStr}::date) + INTERVAL '1 month' - INTERVAL '1 day'))::int - 1) * INTERVAL '1 day'
       )::date AS due_date
@@ -104,7 +104,7 @@ export async function getTodaySummary(tx: TxClient, tenantId: string, todayStr: 
       AND LEAST(l.monthly_due_day,
         EXTRACT(DAY FROM DATE_TRUNC('month', ${todayStr}::date) + INTERVAL '1 month' - INTERVAL '1 day'))
         = EXTRACT(DAY FROM ${todayStr}::date)
-      AND (l.last_interest_paid_through IS NULL OR l.last_interest_paid_through < DATE_TRUNC('month', ${todayStr}::date))
+      AND (l.last_interest_paid_through IS NULL OR l.last_interest_paid_through < (${todayStr}::date - INTERVAL '1 month'))
   `;
   const monthlyInterestDueToday = monthlyDueRows.map((r) => ({
     loanId: r.loan_id,

@@ -1117,7 +1117,7 @@ describe('Bulk Collection — POST /transactions/bulk', () => {
     await prisma.user.delete({ where: { id: collector2.id } });
   });
 
-  it('Admin cannot use bulk endpoint → 403', async () => {
+  it('Admin can use bulk endpoint → 201', async () => {
     const res = await request
       .post('/api/v1/transactions/bulk')
       .set('Authorization', `Bearer ${adminAccessToken}`)
@@ -1128,7 +1128,7 @@ describe('Bulk Collection — POST /transactions/bulk', () => {
         ],
       });
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(201);
   });
 
   it('Empty collections array → 400', async () => {

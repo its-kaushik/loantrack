@@ -912,8 +912,13 @@ describe('Overdue Detection — Daily', () => {
       .set('Authorization', `Bearer ${adminAccessToken}`);
 
     // Overdue threshold = 2025-12-30 + 7 = 2026-01-06
-    // Today = 2026-01-31 → daysOverdue = 25
-    expect(res.body.data.daysOverdue).toBe(25);
+    // daysOverdue = today - overdueThreshold (dynamic)
+    const overdueThreshold = new Date(Date.UTC(2026, 0, 6)); // 2026-01-06
+    const todayDate = new Date();
+    const todayUTC = Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth(), todayDate.getUTCDate());
+    const thresholdUTC = overdueThreshold.getTime();
+    const expectedDays = Math.round((todayUTC - thresholdUTC) / (1000 * 60 * 60 * 24));
+    expect(res.body.data.daysOverdue).toBe(expectedDays);
   });
 });
 

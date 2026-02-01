@@ -706,13 +706,13 @@ describe('POST /api/v1/transactions — Principal Return', () => {
     expect(loanDetail.body.data.remainingPrincipal).toBe(15000);
   });
 
-  it('billing_principal unchanged after principal return', async () => {
+  it('billing_principal syncs immediately after principal return', async () => {
     const loanDetail = await request
       .get(`/api/v1/loans/${prLoanId}`)
       .set('Authorization', `Bearer ${adminAccessToken}`);
 
-    // billingPrincipal should still be 20000 (original)
-    expect(loanDetail.body.data.billingPrincipal).toBe(20000);
+    // billingPrincipal should now equal remainingPrincipal (immediate sync)
+    expect(loanDetail.body.data.billingPrincipal).toBe(15000);
   });
 
   it('amount > remaining_principal rejected (400)', async () => {

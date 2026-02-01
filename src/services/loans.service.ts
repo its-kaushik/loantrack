@@ -590,7 +590,7 @@ async function computeDueDateInfo(
   }
 
   // For migrated loans, skip cycles already settled before migration
-  if (loan.lastInterestPaidThrough) {
+  if (loan.isMigrated && loan.lastInterestPaidThrough) {
     const lipYear = loan.lastInterestPaidThrough.getUTCFullYear();
     const lipMonth = loan.lastInterestPaidThrough.getUTCMonth() + 1;
     if (lipYear > cycleYear || (lipYear === cycleYear && lipMonth >= cycleMonth)) {
@@ -763,7 +763,7 @@ export async function getPaymentStatus(tenantId: string, loanId: string) {
   }
 
   // For migrated loans, skip cycles already settled before migration
-  if (loan.lastInterestPaidThrough) {
+  if (loan.isMigrated && loan.lastInterestPaidThrough) {
     const lipYear = loan.lastInterestPaidThrough.getUTCFullYear();
     const lipMonth = loan.lastInterestPaidThrough.getUTCMonth() + 1;
     if (lipYear > cycleYear || (lipYear === cycleYear && lipMonth >= cycleMonth)) {
@@ -1005,7 +1005,11 @@ export async function closeLoan(tenantId: string, loanId: string, closedById: st
  * Determines the billing principal for a given cycle.
  * Billing principal for cycle N = remainingPrincipal just before that cycle started.
  * = last principal_returns.remaining_principal_after where return_date < cycle start date,
- *   or principalAmount if no returns exist before that date.
+ *   or the initial billing principal if no returns exist before that date.
+ *
+ * Since billingPrincipal on the loan is now synced immediately with remainingPrincipal,
+ * the fallback reconstructs the initial billing principal from the earliest principal_return
+ * record (remainingPrincipalAfter + amountReturned) when returns exist.
  */
 async function getBillingPrincipalForCycle(
   tenantId: string,
@@ -1032,8 +1036,19 @@ async function getBillingPrincipalForCycle(
     return Number(lastReturn.remainingPrincipalAfter);
   }
 
-  // For migrated loans, use billingPrincipal (set to remaining_principal at migration)
-  // For native loans, use principalAmount (original amount = initial billing principal)
+  // No returns before this cycle — determine initial billing principal.
+  // Check if any returns exist at all; if so, reconstruct the pre-return value.
+  const firstReturn = await prisma.principalReturn.findFirst({
+    where: { loanId, tenantId },
+    orderBy: { returnDate: 'asc' },
+    select: { remainingPrincipalAfter: true, amountReturned: true },
+  });
+
+  if (firstReturn) {
+    return Number(firstReturn.remainingPrincipalAfter) + Number(firstReturn.amountReturned);
+  }
+
+  // No returns at all — billingPrincipal is still the initial value
   if (loan.isMigrated && loan.billingPrincipal != null) {
     return Number(loan.billingPrincipal);
   }

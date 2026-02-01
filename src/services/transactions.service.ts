@@ -106,51 +106,7 @@ export async function recordTransaction(
 
     if (data.transaction_type === 'INTEREST_PAYMENT') {
       const effectiveDate = parseDate(data.effective_date!);
-      const effectiveYear = effectiveDate.getUTCFullYear();
-      const effectiveMonth = effectiveDate.getUTCMonth() + 1;
-
-      // Sync billingPrincipal at cycle boundary:
-      // Check if we need to sync billingPrincipal = remainingPrincipal for this cycle.
-      // Billing principal syncs when entering a new cycle.
-      const cycleStartDate = new Date(Date.UTC(effectiveYear, effectiveMonth - 1, 1));
-
-      // Find the last principal return before this cycle
-      const lastReturn = await tx.principalReturn.findFirst({
-        where: {
-          loanId: loan.id,
-          tenantId,
-          returnDate: { lt: cycleStartDate },
-        },
-        orderBy: { returnDate: 'desc' },
-        select: { remainingPrincipalAfter: true },
-      });
-
-      // The expected billingPrincipal for this cycle
-      const expectedBillingPrincipal = lastReturn
-        ? new Decimal(lastReturn.remainingPrincipalAfter.toString())
-        : new Decimal(loan.principalAmount.toString());
-
-      // If billingPrincipal differs from expected, sync it (only for admin auto-approved)
-      let activeBillingPrincipal = currentBillingPrincipal;
-      if (isAutoApproved && !currentBillingPrincipal.eq(expectedBillingPrincipal)) {
-        const syncResult = await tx.loan.updateMany({
-          where: { id: loan.id, tenantId, version: loan.version },
-          data: {
-            billingPrincipal: expectedBillingPrincipal.toNumber(),
-            version: { increment: 1 },
-          },
-        });
-        if (syncResult.count === 0) {
-          throw AppError.conflict('Loan was modified concurrently, please retry');
-        }
-        activeBillingPrincipal = expectedBillingPrincipal;
-        loan.version++;
-      } else {
-        // For collector PENDING or when already synced, use expected for calculation
-        activeBillingPrincipal = expectedBillingPrincipal;
-      }
-
-      const interestDue = activeBillingPrincipal.mul(rate).div(100);
+      const interestDue = currentBillingPrincipal.mul(rate).div(100);
 
       if (amount.lte(interestDue)) {
         // Exact or underpayment — single INTEREST_PAYMENT
@@ -238,6 +194,7 @@ export async function recordTransaction(
             where: { id: loan.id, tenantId, version: loan.version },
             data: {
               remainingPrincipal: newRemaining.toNumber(),
+              billingPrincipal: newRemaining.toNumber(),
               version: { increment: 1 },
             },
           });
@@ -303,6 +260,7 @@ export async function recordTransaction(
           where: { id: loan.id, tenantId, version: loan.version },
           data: {
             remainingPrincipal: newRemaining.toNumber(),
+            billingPrincipal: newRemaining.toNumber(),
             version: { increment: 1 },
           },
         });
@@ -531,6 +489,7 @@ async function executeSideEffects(tx: any, tenantId: string, approvedById: strin
       where: { id: loan.id, tenantId, version: loan.version },
       data: {
         remainingPrincipal: newRemaining.toNumber(),
+        billingPrincipal: newRemaining.toNumber(),
         version: { increment: 1 },
       },
     });
@@ -971,11 +930,12 @@ async function executeReversedSideEffects(
   }
 
   if (original.transactionType === 'PRINCIPAL_RETURN') {
-    // Increment remainingPrincipal back
+    // Increment remainingPrincipal and billingPrincipal back
     const updateResult = await tx.loan.updateMany({
       where: { id: loan.id, tenantId, version: loan.version },
       data: {
         remainingPrincipal: { increment: absAmount },
+        billingPrincipal: { increment: absAmount },
         version: { increment: 1 },
       },
     });
