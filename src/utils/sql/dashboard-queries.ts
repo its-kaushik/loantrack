@@ -17,7 +17,7 @@ export interface TodaySummaryResult {
   activeDailyLoanCount: number;
   expectedCollections: { count: number; totalAmount: string };
   receivedCollections: { count: number; totalAmount: string };
-  missedToday: Array<{ loanId: string; borrowerName: string; dailyPaymentAmount: string }>;
+  missedToday: Array<{ loanId: string; borrowerName: string; borrowerPhone: string; dailyPaymentAmount: string }>;
   monthlyInterestDueToday: Array<{ loanId: string; borrowerName: string; interestAmount: string; dueDate: string }>;
   pendingApprovalsCount: number;
   totalCollectedToday: string;
@@ -60,8 +60,8 @@ export async function getTodaySummary(tx: TxClient, tenantId: string, todayStr: 
   };
 
   // 4. Missed today (active daily within term with NO approved DAILY_COLLECTION today)
-  const missedRows: Array<{ loan_id: string; borrower_name: string; daily_payment_amount: unknown }> = await tx.$queryRaw`
-    SELECT l.id AS loan_id, c.full_name AS borrower_name, l.daily_payment_amount
+  const missedRows: Array<{ loan_id: string; borrower_name: string; borrower_phone: string; daily_payment_amount: unknown }> = await tx.$queryRaw`
+    SELECT l.id AS loan_id, c.full_name AS borrower_name, c.phone AS borrower_phone, l.daily_payment_amount
     FROM loans l
     JOIN customers c ON c.id = l.borrower_id
     WHERE l.tenant_id = ${tenantId}::uuid
@@ -79,6 +79,7 @@ export async function getTodaySummary(tx: TxClient, tenantId: string, todayStr: 
   const missedToday = missedRows.map((r) => ({
     loanId: r.loan_id,
     borrowerName: r.borrower_name,
+    borrowerPhone: r.borrower_phone,
     dailyPaymentAmount: toDecimalStr(r.daily_payment_amount),
   }));
 
