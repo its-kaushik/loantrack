@@ -31,35 +31,37 @@ export async function getTodaySummary(tx: TxClient, tenantId: string, todayStr: 
   `;
   const activeDailyLoanCount = toBigInt(activeDailyRow.count);
 
-  // 2. Expected collections today (active daily loans within term)
+  // 2. Expected collections today (all active daily loans)
   const [expectedRow]: [{ count: unknown; total_amount: unknown }] = await tx.$queryRaw`
     SELECT COUNT(*) AS count, COALESCE(SUM(daily_payment_amount), 0) AS total_amount
     FROM loans
     WHERE tenant_id = ${tenantId}::uuid
       AND loan_type = 'DAILY'
       AND status = 'ACTIVE'
-      AND ${todayStr}::date <= term_end_date
   `;
   const expectedCollections = {
     count: toBigInt(expectedRow.count),
     totalAmount: toDecimalStr(expectedRow.total_amount),
   };
 
-  // 3. Received collections today (count = unique loans that paid, totalAmount = actual money in)
+  // 3. Received collections today (scoped to active daily loans)
   const [receivedRow]: [{ count: unknown; total_amount: unknown }] = await tx.$queryRaw`
     SELECT COUNT(DISTINCT t.loan_id) AS count, COALESCE(SUM(t.amount), 0) AS total_amount
     FROM transactions t
+    JOIN loans l ON l.id = t.loan_id
     WHERE t.tenant_id = ${tenantId}::uuid
       AND t.transaction_type = 'DAILY_COLLECTION'
       AND t.approval_status = 'APPROVED'
       AND t.transaction_date = ${todayStr}::date
+      AND l.loan_type = 'DAILY'
+      AND l.status = 'ACTIVE'
   `;
   const receivedCollections = {
     count: toBigInt(receivedRow.count),
     totalAmount: toDecimalStr(receivedRow.total_amount),
   };
 
-  // 4. Missed today (active daily within term with NO approved DAILY_COLLECTION today)
+  // 4. Missed today (active daily loans with NO approved DAILY_COLLECTION today)
   const missedRows: Array<{ loan_id: string; borrower_name: string; borrower_phone: string; daily_payment_amount: unknown }> = await tx.$queryRaw`
     SELECT l.id AS loan_id, c.full_name AS borrower_name, c.phone AS borrower_phone, l.daily_payment_amount
     FROM loans l
@@ -67,7 +69,6 @@ export async function getTodaySummary(tx: TxClient, tenantId: string, todayStr: 
     WHERE l.tenant_id = ${tenantId}::uuid
       AND l.loan_type = 'DAILY'
       AND l.status = 'ACTIVE'
-      AND ${todayStr}::date <= l.term_end_date
       AND NOT EXISTS (
         SELECT 1 FROM transactions t
         WHERE t.loan_id = l.id
