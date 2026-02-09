@@ -451,7 +451,10 @@ export async function listLoans(
     where.borrowerId = query.borrower_id;
   }
   if (query.search) {
-    where.loanNumber = { contains: query.search, mode: 'insensitive' };
+    where.OR = [
+      { loanNumber: { contains: query.search, mode: 'insensitive' } },
+      { borrower: { fullName: { contains: query.search, mode: 'insensitive' } } },
+    ];
   }
 
   const skip = (query.page - 1) * query.limit;
