@@ -32,6 +32,7 @@ export async function getMissedCollectionsToday(tx: TxClient, tenantId: string, 
           AND t.approval_status IN ('APPROVED', 'PENDING')
           AND t.transaction_date = ${todayStr}::date
       )
+    ORDER BY c.full_name ASC
   `;
   const missedToday = missedRows.map((r) => ({
     loanId: r.loan_id,
