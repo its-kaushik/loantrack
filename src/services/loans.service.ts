@@ -341,7 +341,8 @@ export async function createDailyLoan(
     const principal = new Decimal(data.principal_amount);
     const rate = new Decimal(data.interest_rate);
     const termDays = data.term_days;
-    const totalRepayment = principal.mul(rate.div(100).mul(termDays).div(30).plus(1));
+    const chargedMonths = Math.ceil(termDays / 30);
+    const totalRepayment = principal.mul(rate.div(100).mul(chargedMonths).plus(1));
     const dailyPayment = totalRepayment.div(termDays);
     const termEndDate = addDays(disbursementDate, termDays);
     const graceDays = data.grace_days ?? 7;
