@@ -3,6 +3,7 @@ import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/errors.js';
 import { parseDate, toDateString, getDueDate, today, addDays, daysBetween } from '../utils/date.js';
 import { generateLoanNumber } from '../utils/loan-number.js';
+import { getMissedCollectionsToday } from '../utils/sql/dashboard-queries.js';
 
 // ─── Shared Select Constants ───────────────────────────────────────────────
 
@@ -1265,4 +1266,15 @@ export async function cancelLoan(tenantId: string, loanId: string, adminId: stri
     });
     return formatLoanDetail(updated!);
   });
+}
+
+// ─── getMissedToday ───────────────────────────────────────────────────────
+
+export async function getMissedToday(tenantId: string) {
+  return prisma.$transaction(
+    async (tx) => {
+      return getMissedCollectionsToday(tx, tenantId, today());
+    },
+    { isolationLevel: 'RepeatableRead' },
+  );
 }

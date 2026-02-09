@@ -59,6 +59,11 @@ export async function cancelLoanHandler(req: Request, res: Response) {
   sendSuccess(res, loan);
 }
 
+export async function getMissedTodayHandler(req: Request, res: Response) {
+  const result = await loansService.getMissedToday(req.tenantId!);
+  sendSuccess(res, result);
+}
+
 export async function migrateLoanHandler(req: Request, res: Response) {
   const loan = req.body.loan_type === 'DAILY'
     ? await migrationService.migrateDailyLoan(req.tenantId!, req.user!.userId, req.body)

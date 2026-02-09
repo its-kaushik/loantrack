@@ -49,6 +49,13 @@ router.get(
   loansController.listLoansHandler,
 );
 
+// ADMIN + COLLECTOR can see missed collections today
+router.get(
+  '/missed-today',
+  requireRole('ADMIN', 'COLLECTOR'),
+  loansController.getMissedTodayHandler,
+);
+
 router.get(
   '/:id',
   requireRole('ADMIN', 'COLLECTOR'),

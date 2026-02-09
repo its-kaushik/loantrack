@@ -11,6 +11,38 @@ function toDecimalStr(val: unknown): string {
   return Number(val).toFixed(2);
 }
 
+// ─── Missed Collections Today ─────────────────────────────────────────────
+
+export interface MissedCollectionsTodayResult {
+  missedToday: Array<{ loanId: string; borrowerName: string; borrowerPhone: string; dailyPaymentAmount: string }>;
+}
+
+export async function getMissedCollectionsToday(tx: TxClient, tenantId: string, todayStr: string): Promise<MissedCollectionsTodayResult> {
+  const missedRows: Array<{ loan_id: string; borrower_name: string; borrower_phone: string; daily_payment_amount: unknown }> = await tx.$queryRaw`
+    SELECT l.id AS loan_id, c.full_name AS borrower_name, c.phone AS borrower_phone, l.daily_payment_amount
+    FROM loans l
+    JOIN customers c ON c.id = l.borrower_id
+    WHERE l.tenant_id = ${tenantId}::uuid
+      AND l.loan_type = 'DAILY'
+      AND l.status = 'ACTIVE'
+      AND NOT EXISTS (
+        SELECT 1 FROM transactions t
+        WHERE t.loan_id = l.id
+          AND t.transaction_type = 'DAILY_COLLECTION'
+          AND t.approval_status IN ('APPROVED', 'PENDING')
+          AND t.transaction_date = ${todayStr}::date
+      )
+  `;
+  const missedToday = missedRows.map((r) => ({
+    loanId: r.loan_id,
+    borrowerName: r.borrower_name,
+    borrowerPhone: r.borrower_phone,
+    dailyPaymentAmount: toDecimalStr(r.daily_payment_amount),
+  }));
+
+  return { missedToday };
+}
+
 // ─── Today's Summary ──────────────────────────────────────────────────────
 
 export interface TodaySummaryResult {
@@ -62,27 +94,7 @@ export async function getTodaySummary(tx: TxClient, tenantId: string, todayStr: 
   };
 
   // 4. Missed today (active daily loans with NO approved DAILY_COLLECTION today)
-  const missedRows: Array<{ loan_id: string; borrower_name: string; borrower_phone: string; daily_payment_amount: unknown }> = await tx.$queryRaw`
-    SELECT l.id AS loan_id, c.full_name AS borrower_name, c.phone AS borrower_phone, l.daily_payment_amount
-    FROM loans l
-    JOIN customers c ON c.id = l.borrower_id
-    WHERE l.tenant_id = ${tenantId}::uuid
-      AND l.loan_type = 'DAILY'
-      AND l.status = 'ACTIVE'
-      AND NOT EXISTS (
-        SELECT 1 FROM transactions t
-        WHERE t.loan_id = l.id
-          AND t.transaction_type = 'DAILY_COLLECTION'
-          AND t.approval_status = 'APPROVED'
-          AND t.transaction_date = ${todayStr}::date
-      )
-  `;
-  const missedToday = missedRows.map((r) => ({
-    loanId: r.loan_id,
-    borrowerName: r.borrower_name,
-    borrowerPhone: r.borrower_phone,
-    dailyPaymentAmount: toDecimalStr(r.daily_payment_amount),
-  }));
+  const { missedToday } = await getMissedCollectionsToday(tx, tenantId, todayStr);
 
   // 5. Monthly interest due today
   const monthlyDueRows: Array<{
