@@ -60,7 +60,7 @@ export async function cancelLoanHandler(req: Request, res: Response) {
 }
 
 export async function getMissedTodayHandler(req: Request, res: Response) {
-  const result = await loansService.getMissedToday(req.tenantId!);
+  const result = await loansService.getMissedToday(req.tenantId!, req.user!.userId);
   sendSuccess(res, result);
 }
 

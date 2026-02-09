@@ -1270,10 +1270,29 @@ export async function cancelLoan(tenantId: string, loanId: string, adminId: stri
 
 // ─── getMissedToday ───────────────────────────────────────────────────────
 
-export async function getMissedToday(tenantId: string) {
+export async function getMissedToday(tenantId: string, userId: string) {
   return prisma.$transaction(
     async (tx) => {
-      return getMissedCollectionsToday(tx, tenantId, today());
+      const todayStr = today();
+      const missed = await getMissedCollectionsToday(tx, tenantId, todayStr);
+
+      const [myRow]: [{ count: unknown; total_amount: unknown }] = await tx.$queryRaw`
+        SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total_amount
+        FROM transactions
+        WHERE tenant_id = ${tenantId}::uuid
+          AND collected_by = ${userId}::uuid
+          AND transaction_type = 'DAILY_COLLECTION'
+          AND approval_status IN ('APPROVED', 'PENDING')
+          AND transaction_date = ${todayStr}::date
+      `;
+
+      return {
+        myCollectionToday: {
+          count: Number(myRow.count),
+          totalAmount: Number(myRow.total_amount).toFixed(2),
+        },
+        ...missed,
+      };
     },
     { isolationLevel: 'RepeatableRead' },
   );
