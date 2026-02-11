@@ -205,11 +205,6 @@ export async function createMonthlyLoan(
     // Generate loan number
     const loanNumber = await generateLoanNumber(tx, tenantId, year, 'MONTHLY');
 
-    // Calculate advance interest
-    const principal = new Decimal(data.principal_amount);
-    const rate = new Decimal(data.interest_rate);
-    const advanceInterest = principal.mul(rate).div(100);
-
     // Create loan
     const loan = await tx.loan.create({
       data: {
@@ -224,7 +219,7 @@ export async function createMonthlyLoan(
         monthlyDueDay,
         remainingPrincipal: data.principal_amount,
         billingPrincipal: data.principal_amount,
-        advanceInterestAmount: advanceInterest.toNumber(),
+        advanceInterestAmount: 0,
         lastInterestPaidThrough: disbursementDate,
         guarantorId: data.guarantor_id,
         collateralDescription: data.collateral_description,
@@ -246,18 +241,6 @@ export async function createMonthlyLoan(
       },
     });
 
-    // Create ADVANCE_INTEREST transaction (auto-approved)
-    await tx.transaction.create({
-      data: {
-        tenantId,
-        loanId: loan.id,
-        transactionType: 'ADVANCE_INTEREST',
-        amount: advanceInterest.toNumber(),
-        transactionDate: disbursementDate,
-        approvalStatus: 'APPROVED',
-      },
-    });
-
     return {
       id: loan.id,
       loanNumber: loan.loanNumber,
@@ -272,7 +255,7 @@ export async function createMonthlyLoan(
       guarantorName,
       remainingPrincipal: Number(loan.remainingPrincipal),
       billingPrincipal: Number(loan.billingPrincipal),
-      advanceInterestAmount: advanceInterest.toNumber(),
+      advanceInterestAmount: 0,
       expectedMonths: loan.expectedMonths,
       monthlyDueDay: loan.monthlyDueDay,
       collateralDescription: loan.collateralDescription,
@@ -619,10 +602,10 @@ async function computeDueDateInfo(
     const dueDateStr = toDateString(dueDate);
 
     // Check if this cycle is settled
-    const billingPrincipalForCycle = await getBillingPrincipalForCycle(tenantId, loanId, loan, cycleYear, cycleMonth);
+    const billingPrincipalForCycle = await getBillingPrincipalForCycle(prisma, tenantId, loanId, loan, cycleYear, cycleMonth);
     const interestDue = new Decimal(billingPrincipalForCycle.toString()).mul(rate).div(100);
 
-    const { paid, waived } = await getCyclePayments(tenantId, loanId, cycleYear, cycleMonth);
+    const { paid, waived } = await getCyclePayments(prisma, tenantId, loanId, cycleYear, cycleMonth);
     const totalSettled = new Decimal(paid.toString()).plus(new Decimal(waived.toString()));
     const isSettled = totalSettled.gte(interestDue);
 
@@ -784,10 +767,10 @@ export async function getPaymentStatus(tenantId: string, loanId: string) {
     const dueDate = getDueDate(monthlyDueDay, cycleYear, cycleMonth);
     const dueDateStr = toDateString(dueDate);
 
-    const billingPrincipalForCycle = await getBillingPrincipalForCycle(tenantId, loanId, loan, cycleYear, cycleMonth);
+    const billingPrincipalForCycle = await getBillingPrincipalForCycle(prisma, tenantId, loanId, loan, cycleYear, cycleMonth);
     const interestDue = new Decimal(billingPrincipalForCycle.toString()).mul(rate).div(100);
 
-    const { paid, waived } = await getCyclePayments(tenantId, loanId, cycleYear, cycleMonth);
+    const { paid, waived } = await getCyclePayments(prisma, tenantId, loanId, cycleYear, cycleMonth);
     const totalSettled = new Decimal(paid.toString()).plus(new Decimal(waived.toString()));
     const isSettled = totalSettled.gte(interestDue);
 
@@ -1016,7 +999,9 @@ export async function closeLoan(tenantId: string, loanId: string, closedById: st
  * the fallback reconstructs the initial billing principal from the earliest principal_return
  * record (remainingPrincipalAfter + amountReturned) when returns exist.
  */
-async function getBillingPrincipalForCycle(
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function getBillingPrincipalForCycle(
+  db: any,
   tenantId: string,
   loanId: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1027,7 +1012,7 @@ async function getBillingPrincipalForCycle(
   // Cycle start date is the 1st of that cycle month
   const cycleStartDate = new Date(Date.UTC(cycleYear, cycleMonth - 1, 1));
 
-  const lastReturn = await prisma.principalReturn.findFirst({
+  const lastReturn = await db.principalReturn.findFirst({
     where: {
       loanId,
       tenantId,
@@ -1043,7 +1028,7 @@ async function getBillingPrincipalForCycle(
 
   // No returns before this cycle — determine initial billing principal.
   // Check if any returns exist at all; if so, reconstruct the pre-return value.
-  const firstReturn = await prisma.principalReturn.findFirst({
+  const firstReturn = await db.principalReturn.findFirst({
     where: { loanId, tenantId },
     orderBy: { returnDate: 'asc' },
     select: { remainingPrincipalAfter: true, amountReturned: true },
@@ -1064,7 +1049,9 @@ async function getBillingPrincipalForCycle(
  * Gets the total INTEREST_PAYMENT and INTEREST_WAIVER amounts for a given cycle.
  * A cycle is identified by effective_date being in that calendar month.
  */
-async function getCyclePayments(
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function getCyclePayments(
+  db: any,
   tenantId: string,
   loanId: string,
   cycleYear: number,
@@ -1073,7 +1060,7 @@ async function getCyclePayments(
   const startDate = new Date(Date.UTC(cycleYear, cycleMonth - 1, 1));
   const endDate = new Date(Date.UTC(cycleYear, cycleMonth, 1)); // first of next month
 
-  const paidAgg = await prisma.transaction.aggregate({
+  const paidAgg = await db.transaction.aggregate({
     where: {
       loanId,
       tenantId,
@@ -1084,7 +1071,7 @@ async function getCyclePayments(
     _sum: { amount: true },
   });
 
-  const waivedAgg = await prisma.transaction.aggregate({
+  const waivedAgg = await db.transaction.aggregate({
     where: {
       loanId,
       tenantId,
@@ -1099,6 +1086,189 @@ async function getCyclePayments(
     paid: paidAgg._sum.amount ? Number(paidAgg._sum.amount) : 0,
     waived: waivedAgg._sum.amount ? Number(waivedAgg._sum.amount) : 0,
   };
+}
+
+// ─── getUnsettledCycles ───────────────────────────────────────────────────
+
+/**
+ * Returns unsettled cycles in order with their remaining balance.
+ * Used by INTEREST_PAYMENT multi-cycle settlement and waiveInterest auto-targeting.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function getUnsettledCycles(
+  db: any,
+  tenantId: string,
+  loanId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loan: any,
+): Promise<Array<{
+  cycleYear: number;
+  cycleMonth: number;
+  dueDate: Date;
+  interestDue: Decimal;
+  alreadyPaid: number;
+  alreadyWaived: number;
+  remaining: Decimal;
+}>> {
+  const disbDate = loan.disbursementDate;
+  const monthlyDueDay = loan.monthlyDueDay!;
+  const rate = new Decimal(loan.interestRate.toString());
+
+  const disbYear = disbDate.getUTCFullYear();
+  const disbMonth = disbDate.getUTCMonth() + 1; // 1-indexed
+
+  // Start from month after disbursement
+  let cycleYear = disbYear;
+  let cycleMonth = disbMonth + 1;
+  if (cycleMonth > 12) {
+    cycleMonth = 1;
+    cycleYear++;
+  }
+
+  // For migrated loans, skip cycles already settled before migration
+  if (loan.isMigrated && loan.lastInterestPaidThrough) {
+    const lipYear = loan.lastInterestPaidThrough.getUTCFullYear();
+    const lipMonth = loan.lastInterestPaidThrough.getUTCMonth() + 1;
+    if (lipYear > cycleYear || (lipYear === cycleYear && lipMonth >= cycleMonth)) {
+      cycleYear = lipYear;
+      cycleMonth = lipMonth + 1;
+      if (cycleMonth > 12) { cycleMonth = 1; cycleYear++; }
+    }
+  }
+
+  const todayDate = parseDate(today());
+  const todayYear = todayDate.getUTCFullYear();
+  const todayMonth = todayDate.getUTCMonth() + 1;
+
+  const unsettled: Array<{
+    cycleYear: number;
+    cycleMonth: number;
+    dueDate: Date;
+    interestDue: Decimal;
+    alreadyPaid: number;
+    alreadyWaived: number;
+    remaining: Decimal;
+  }> = [];
+
+  while (cycleYear < todayYear || (cycleYear === todayYear && cycleMonth <= todayMonth)) {
+    const dueDate = getDueDate(monthlyDueDay, cycleYear, cycleMonth);
+
+    const billingPrincipalForCycle = await getBillingPrincipalForCycle(db, tenantId, loanId, loan, cycleYear, cycleMonth);
+    const interestDue = new Decimal(billingPrincipalForCycle.toString()).mul(rate).div(100);
+
+    const { paid, waived } = await getCyclePayments(db, tenantId, loanId, cycleYear, cycleMonth);
+    const totalSettled = new Decimal(paid.toString()).plus(new Decimal(waived.toString()));
+    const remaining = interestDue.minus(totalSettled);
+
+    if (remaining.gt(0)) {
+      unsettled.push({
+        cycleYear,
+        cycleMonth,
+        dueDate,
+        interestDue,
+        alreadyPaid: paid,
+        alreadyWaived: waived,
+        remaining,
+      });
+    }
+
+    cycleMonth++;
+    if (cycleMonth > 12) {
+      cycleMonth = 1;
+      cycleYear++;
+    }
+  }
+
+  return unsettled;
+}
+
+// ─── recomputeLastSettledThrough ──────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function recomputeLastSettledThrough(
+  tx: any,
+  tenantId: string,
+  loanId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loan: any,
+) {
+  const disbDate = loan.disbursementDate;
+  const monthlyDueDay = loan.monthlyDueDay!;
+  const rate = new Decimal(loan.interestRate.toString());
+
+  const disbYear = disbDate.getUTCFullYear();
+  const disbMonth = disbDate.getUTCMonth() + 1; // 1-indexed
+
+  let cycleYear = disbYear;
+  let cycleMonth = disbMonth + 1;
+  if (cycleMonth > 12) {
+    cycleMonth = 1;
+    cycleYear++;
+  }
+
+  // Migrated loans: walk only post-migration cycles (no tx data for pre-migration cycles)
+  if (loan.isMigrated && loan.lastInterestPaidThrough) {
+    const lipYear = loan.lastInterestPaidThrough.getUTCFullYear();
+    const lipMonth = loan.lastInterestPaidThrough.getUTCMonth() + 1;
+    if (lipYear > cycleYear || (lipYear === cycleYear && lipMonth >= cycleMonth)) {
+      cycleYear = lipYear;
+      cycleMonth = lipMonth + 1;
+      if (cycleMonth > 12) { cycleMonth = 1; cycleYear++; }
+    }
+  }
+
+  const todayDate = parseDate(today());
+  const todayYear = todayDate.getUTCFullYear();
+  const todayMonth = todayDate.getUTCMonth() + 1;
+
+  let lastSettledDueDate: Date | null = null;
+
+  while (cycleYear < todayYear || (cycleYear === todayYear && cycleMonth <= todayMonth)) {
+    const dueDate = getDueDate(monthlyDueDay, cycleYear, cycleMonth);
+
+    const billingPrincipalForCycle = await getBillingPrincipalForCycle(tx, tenantId, loanId, loan, cycleYear, cycleMonth);
+    const interestDue = new Decimal(billingPrincipalForCycle.toString()).mul(rate).div(100);
+
+    const { paid, waived } = await getCyclePayments(tx, tenantId, loanId, cycleYear, cycleMonth);
+    const totalSettled = new Decimal(paid.toString()).plus(new Decimal(waived.toString()));
+    const isSettled = totalSettled.gte(interestDue);
+
+    if (!isSettled) {
+      break; // Stop at first unsettled cycle
+    }
+
+    lastSettledDueDate = dueDate;
+
+    cycleMonth++;
+    if (cycleMonth > 12) {
+      cycleMonth = 1;
+      cycleYear++;
+    }
+  }
+
+  if (loan.isMigrated) {
+    // Only advance forward — never regress past the pre-migration value
+    if (lastSettledDueDate) {
+      await tx.loan.updateMany({
+        where: {
+          id: loanId,
+          tenantId,
+          OR: [
+            { lastInterestPaidThrough: null },
+            { lastInterestPaidThrough: { lt: lastSettledDueDate } },
+          ],
+        },
+        data: { lastInterestPaidThrough: lastSettledDueDate },
+      });
+    }
+  } else {
+    // Non-migrated: set to last contiguously settled cycle, or disbursementDate if none settled
+    const newValue = lastSettledDueDate ?? disbDate;
+    await tx.loan.updateMany({
+      where: { id: loanId, tenantId },
+      data: { lastInterestPaidThrough: newValue },
+    });
+  }
 }
 
 // ─── defaultLoan ──────────────────────────────────────────────────────────

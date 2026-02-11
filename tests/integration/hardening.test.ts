@@ -108,8 +108,8 @@ describe('Rounding Audit', () => {
       });
     expect(loanRes.status).toBe(201);
 
-    // Advance interest = billingPrincipal * rate / 100 = 33333 * 0.03 = 999.99
-    expect(loanRes.body.data.advanceInterestAmount).toBe(999.99);
+    // No advance interest collected for monthly loans
+    expect(loanRes.body.data.advanceInterestAmount).toBe(0);
 
     // Make an interest payment and verify the amount accepted
     const payRes = await request
@@ -120,7 +120,6 @@ describe('Rounding Audit', () => {
         transaction_type: 'INTEREST_PAYMENT',
         amount: 999.99,
         transaction_date: '2025-12-01',
-        effective_date: '2025-12-01',
       });
     expect(payRes.status).toBe(201);
     expect(payRes.body.data).toHaveLength(1);
@@ -152,8 +151,10 @@ describe('Rounding Audit', () => {
     expect(daily.mul(120).eq(total)).toBe(true);
   });
 
-  it('should auto-split overpayment exactly: interest_due=2000.00, payment=5000.01 → INTEREST=2000.00, PRINCIPAL=3000.01', async () => {
-    // principal=100000, rate=2% → interest_due=2000
+  it('should auto-split overpayment across multiple cycles exactly: principal=100000, rate=2%, payment=5000.01', async () => {
+    // principal=100000, rate=2% → interest_due=2000 per cycle
+    // Disbursed Oct 15 → unsettled cycles: Nov, Dec, Jan, Feb (2000 each)
+    // Payment of 5000.01 → Nov (2000) + Dec (2000) + Jan (1000.01) = 3 INTEREST_PAYMENT
     const loanRes = await request
       .post('/api/v1/loans')
       .set('Authorization', `Bearer ${adminAccessToken}`)
@@ -167,7 +168,6 @@ describe('Rounding Audit', () => {
     expect(loanRes.status).toBe(201);
     const loanId = loanRes.body.data.id;
 
-    // Overpay: 5000.01 (interest_due=2000.00, principal_return=3000.01)
     const payRes = await request
       .post('/api/v1/transactions')
       .set('Authorization', `Bearer ${adminAccessToken}`)
@@ -176,18 +176,20 @@ describe('Rounding Audit', () => {
         transaction_type: 'INTEREST_PAYMENT',
         amount: 5000.01,
         transaction_date: '2025-11-15',
-        effective_date: '2025-11-15',
       });
     expect(payRes.status).toBe(201);
-    expect(payRes.body.data).toHaveLength(2);
+    expect(payRes.body.data).toHaveLength(3);
 
-    const interestTxn = payRes.body.data.find((t: { transactionType: string }) => t.transactionType === 'INTEREST_PAYMENT');
-    const principalTxn = payRes.body.data.find((t: { transactionType: string }) => t.transactionType === 'PRINCIPAL_RETURN');
+    // All should be INTEREST_PAYMENT (multi-cycle settlement)
+    const interestTxns = payRes.body.data.filter((t: { transactionType: string }) => t.transactionType === 'INTEREST_PAYMENT');
+    expect(interestTxns).toHaveLength(3);
+    expect(interestTxns[0].amount).toBe(2000);
+    expect(interestTxns[1].amount).toBe(2000);
+    expect(interestTxns[2].amount).toBe(1000.01);
 
-    expect(interestTxn).toBeDefined();
-    expect(principalTxn).toBeDefined();
-    expect(interestTxn.amount).toBe(2000);
-    expect(principalTxn.amount).toBe(3000.01);
+    // Sum must equal original payment
+    const sum = interestTxns.reduce((acc: number, t: { amount: number }) => acc + t.amount, 0);
+    expect(sum).toBeCloseTo(5000.01, 2);
   });
 
   it('should verify auto-split parts always equal original amount', async () => {
@@ -218,7 +220,6 @@ describe('Rounding Audit', () => {
         transaction_type: 'INTEREST_PAYMENT',
         amount: 4000,
         transaction_date: '2025-10-01',
-        effective_date: '2025-10-01',
       });
     expect(payRes.status).toBe(201);
     expect(payRes.body.data).toHaveLength(2);

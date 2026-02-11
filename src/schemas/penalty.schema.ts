@@ -29,10 +29,6 @@ export const waivePenaltySchema = z
 
 export const waiveInterestSchema = z
   .object({
-    effective_date: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
-      .openapi({ example: '2026-02-15' }),
     waive_amount: z.number().positive().openapi({ example: 2500 }),
     notes: z.string().max(2000).optional().openapi({ example: 'Interest waiver for cycle' }),
   })

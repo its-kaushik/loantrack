@@ -18,11 +18,6 @@ export const createTransactionSchema = z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
       .openapi({ example: '2026-02-15' }),
-    effective_date: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
-      .optional()
-      .openapi({ example: '2026-02-15' }),
     notes: z.string().max(2000).optional().openapi({ example: 'Monthly interest payment' }),
   })
   .superRefine((data, ctx) => {
@@ -44,14 +39,6 @@ export const createTransactionSchema = z
           path: ['amount'],
         });
       }
-    }
-    // effective_date required for INTEREST_PAYMENT only when not corrective
-    if (data.transaction_type === 'INTEREST_PAYMENT' && !data.effective_date && !data.corrected_transaction_id) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'effective_date is required for INTEREST_PAYMENT',
-        path: ['effective_date'],
-      });
     }
   })
   .openapi('CreateTransactionRequest');

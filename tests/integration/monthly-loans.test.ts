@@ -143,7 +143,7 @@ describe('POST /api/v1/loans', () => {
     expect(res.body.data.status).toBe('ACTIVE');
     expect(res.body.data.remainingPrincipal).toBe(100000);
     expect(res.body.data.billingPrincipal).toBe(100000);
-    expect(res.body.data.advanceInterestAmount).toBe(2500);
+    expect(res.body.data.advanceInterestAmount).toBe(0);
     expect(res.body.data.monthlyDueDay).toBe(15);
     expect(res.body.data.loanNumber).toMatch(/^ML-2025-\d{4}$/);
 
@@ -151,7 +151,7 @@ describe('POST /api/v1/loans', () => {
     firstLoanNumber = res.body.data.loanNumber;
   });
 
-  it('creates DISBURSEMENT + ADVANCE_INTEREST transactions atomically', async () => {
+  it('creates only DISBURSEMENT transaction (no advance interest)', async () => {
     const res = await request
       .get(`/api/v1/loans/${firstLoanId}/transactions`)
       .set('Authorization', `Bearer ${adminAccessToken}`);
@@ -159,13 +159,10 @@ describe('POST /api/v1/loans', () => {
     expect(res.status).toBe(200);
     const types = res.body.data.map((t: { transactionType: string }) => t.transactionType);
     expect(types).toContain('DISBURSEMENT');
-    expect(types).toContain('ADVANCE_INTEREST');
+    expect(types).not.toContain('ADVANCE_INTEREST');
 
     const disbursement = res.body.data.find((t: { transactionType: string }) => t.transactionType === 'DISBURSEMENT');
     expect(disbursement.amount).toBe(100000);
-
-    const advanceInterest = res.body.data.find((t: { transactionType: string }) => t.transactionType === 'ADVANCE_INTEREST');
-    expect(advanceInterest.amount).toBe(2500);
   });
 
   it('generates sequential loan numbers', async () => {
@@ -460,7 +457,6 @@ describe('POST /api/v1/transactions — Interest Payment', () => {
         transaction_type: 'INTEREST_PAYMENT',
         amount: 2500,
         transaction_date: '2026-01-15',
-        effective_date: '2026-01-15',
       });
 
     expect(res.status).toBe(201);
@@ -492,7 +488,6 @@ describe('POST /api/v1/transactions — Interest Payment', () => {
         transaction_type: 'INTEREST_PAYMENT',
         amount: 1000,
         transaction_date: '2025-12-10',
-        effective_date: '2025-12-10',
       });
 
     expect(res.status).toBe(201);
@@ -513,8 +508,8 @@ describe('POST /api/v1/transactions — Interest Payment', () => {
     expect(decCycle.interestPaid).toBe(1000);
   });
 
-  it('overpayment auto-splits into INTEREST_PAYMENT + PRINCIPAL_RETURN', async () => {
-    // Loan disbursed Nov 5, 2025 → Dec cycle exists
+  it('overpayment settles multiple cycles then PRINCIPAL_RETURN for excess', async () => {
+    // Loan disbursed Nov 5, 2025 → Dec 2025, Jan 2026, Feb 2026 cycles unsettled
     const loanRes = await request
       .post('/api/v1/loans')
       .set('Authorization', `Bearer ${adminAccessToken}`)
@@ -526,7 +521,9 @@ describe('POST /api/v1/transactions — Interest Payment', () => {
         disbursement_date: '2025-11-05',
       });
     const loanId = loanRes.body.data.id;
-    // Interest due = 50000 * 2 / 100 = 1000
+    // Interest due per cycle = 50000 * 2 / 100 = 1000
+    // 3 unsettled cycles (Dec, Jan, Feb) = 3000 interest total
+    // Payment of 6000 → 3 × INTEREST_PAYMENT (1000 each) + 1 × PRINCIPAL_RETURN (3000)
 
     const res = await request
       .post('/api/v1/transactions')
@@ -535,33 +532,36 @@ describe('POST /api/v1/transactions — Interest Payment', () => {
         loan_id: loanId,
         transaction_type: 'INTEREST_PAYMENT',
         amount: 6000,
-        transaction_date: '2025-12-05',
-        effective_date: '2025-12-05',
+        transaction_date: '2026-02-05',
       });
 
     expect(res.status).toBe(201);
-    expect(res.body.data.length).toBe(2);
+    expect(res.body.data.length).toBe(4);
 
-    const interestTxn = res.body.data.find(
+    const interestTxns = res.body.data.filter(
       (t: { transactionType: string }) => t.transactionType === 'INTEREST_PAYMENT',
     );
-    expect(interestTxn.amount).toBe(1000);
+    expect(interestTxns.length).toBe(3);
+    for (const txn of interestTxns) {
+      expect(txn.amount).toBe(1000);
+    }
 
     const principalTxn = res.body.data.find(
       (t: { transactionType: string }) => t.transactionType === 'PRINCIPAL_RETURN',
     );
-    expect(principalTxn.amount).toBe(5000);
+    expect(principalTxn).toBeDefined();
+    expect(principalTxn.amount).toBe(3000);
 
     // Verify remaining principal decremented
     const loanDetail = await request
       .get(`/api/v1/loans/${loanId}`)
       .set('Authorization', `Bearer ${adminAccessToken}`);
 
-    expect(loanDetail.body.data.remainingPrincipal).toBe(45000);
+    expect(loanDetail.body.data.remainingPrincipal).toBe(47000);
   });
 
   it('auto-split Decimal precision (no rounding loss)', async () => {
-    // Loan disbursed Nov 1, 2025 → Dec cycle exists
+    // Loan disbursed Nov 1, 2025 → Dec 2025 and Jan 2026 cycles exist
     const loanRes = await request
       .post('/api/v1/loans')
       .set('Authorization', `Bearer ${adminAccessToken}`)
@@ -573,7 +573,8 @@ describe('POST /api/v1/transactions — Interest Payment', () => {
         disbursement_date: '2025-11-01',
       });
     const loanId = loanRes.body.data.id;
-    // Interest due = 33333 * 3 / 100 = 999.99
+    // Interest due per cycle = 33333 * 3 / 100 = 999.99
+    // Payment of 1500 → Dec INTEREST_PAYMENT (999.99) + Jan INTEREST_PAYMENT (500.01)
 
     const res = await request
       .post('/api/v1/transactions')
@@ -582,25 +583,22 @@ describe('POST /api/v1/transactions — Interest Payment', () => {
         loan_id: loanId,
         transaction_type: 'INTEREST_PAYMENT',
         amount: 1500,
-        transaction_date: '2025-12-01',
-        effective_date: '2025-12-01',
+        transaction_date: '2026-01-15',
       });
 
     expect(res.status).toBe(201);
     expect(res.body.data.length).toBe(2);
 
-    const interestTxn = res.body.data.find(
+    // Both should be INTEREST_PAYMENT (Dec full, Jan partial)
+    const interestTxns = res.body.data.filter(
       (t: { transactionType: string }) => t.transactionType === 'INTEREST_PAYMENT',
     );
-    expect(interestTxn.amount).toBe(999.99);
-
-    const principalTxn = res.body.data.find(
-      (t: { transactionType: string }) => t.transactionType === 'PRINCIPAL_RETURN',
-    );
-    expect(principalTxn.amount).toBe(500.01);
+    expect(interestTxns.length).toBe(2);
+    expect(interestTxns[0].amount).toBe(999.99);
+    expect(interestTxns[1].amount).toBe(500.01);
 
     // Verify: 999.99 + 500.01 = 1500 exactly
-    expect(interestTxn.amount + principalTxn.amount).toBe(1500);
+    expect(interestTxns[0].amount + interestTxns[1].amount).toBe(1500);
   });
 
   it('overpayment exceeding remaining principal rejected (400)', async () => {
@@ -616,8 +614,9 @@ describe('POST /api/v1/transactions — Interest Payment', () => {
         disbursement_date: '2025-11-01',
       });
     const loanId = loanRes.body.data.id;
-    // Interest due = 1000 * 5 / 100 = 50
-    // Overpayment of 2000 → principal portion = 1950, but only 1000 remaining
+    // Interest due per cycle = 1000 * 5 / 100 = 50
+    // Cycles: Dec (50), Jan (50), Feb (50) = 150 total interest
+    // Overpayment of 2000 → excess after interest = 1850, but only 1000 remaining principal
 
     const res = await request
       .post('/api/v1/transactions')
@@ -626,22 +625,7 @@ describe('POST /api/v1/transactions — Interest Payment', () => {
         loan_id: loanId,
         transaction_type: 'INTEREST_PAYMENT',
         amount: 2000,
-        transaction_date: '2025-12-01',
-        effective_date: '2025-12-01',
-      });
-
-    expect(res.status).toBe(400);
-  });
-
-  it('effective_date required for INTEREST_PAYMENT (400)', async () => {
-    const res = await request
-      .post('/api/v1/transactions')
-      .set('Authorization', `Bearer ${adminAccessToken}`)
-      .send({
-        loan_id: firstLoanId,
-        transaction_type: 'INTEREST_PAYMENT',
-        amount: 2500,
-        transaction_date: '2026-01-15',
+        transaction_date: '2026-02-01',
       });
 
     expect(res.status).toBe(400);
@@ -656,7 +640,6 @@ describe('POST /api/v1/transactions — Interest Payment', () => {
         transaction_type: 'INTEREST_PAYMENT',
         amount: 2500,
         transaction_date: '2026-01-15',
-        effective_date: '2026-01-15',
       });
 
     expect(res.status).toBe(404);
@@ -776,6 +759,7 @@ describe('Billing Principal Lifecycle', () => {
 
     // Nov cycle billing principal should be 70000 (100000 - 30000, return before Nov 1)
     // Interest for Nov = 70000 * 2 / 100 = 1400
+    // Auto-targets Nov (first unsettled cycle)
     const novPayRes = await request
       .post('/api/v1/transactions')
       .set('Authorization', `Bearer ${adminAccessToken}`)
@@ -784,7 +768,6 @@ describe('Billing Principal Lifecycle', () => {
         transaction_type: 'INTEREST_PAYMENT',
         amount: 1400,
         transaction_date: '2025-11-15',
-        effective_date: '2025-11-15',
       });
 
     expect(novPayRes.status).toBe(201);

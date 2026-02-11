@@ -2,6 +2,7 @@ import Decimal from 'decimal.js';
 import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/errors.js';
 import { parseDate, toDateString } from '../utils/date.js';
+import { recomputeLastSettledThrough, getUnsettledCycles } from './loans.service.js';
 
 // ─── recordTransaction ─────────────────────────────────────────────────────
 
@@ -14,7 +15,6 @@ export async function recordTransaction(
     transaction_type: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION' | 'PENALTY' | 'GUARANTOR_PAYMENT';
     amount: number;
     transaction_date: string;
-    effective_date?: string;
     penalty_id?: string;
     corrected_transaction_id?: string;
     notes?: string;
@@ -39,6 +39,10 @@ export async function recordTransaction(
         tenantId: true,
         totalCollected: true,
         totalRepaymentAmount: true,
+        disbursementDate: true,
+        monthlyDueDay: true,
+        isMigrated: true,
+        lastInterestPaidThrough: true,
       },
     });
 
@@ -88,9 +92,7 @@ export async function recordTransaction(
 
     const transactionDate = parseDate(data.transaction_date);
     const amount = new Decimal(data.amount);
-    const rate = new Decimal(loan.interestRate.toString());
     const remainingPrincipal = new Decimal(loan.remainingPrincipal!.toString());
-    const currentBillingPrincipal = new Decimal(loan.billingPrincipal!.toString());
 
     const createdTransactions: Array<{
       id: string;
@@ -105,19 +107,22 @@ export async function recordTransaction(
     }> = [];
 
     if (data.transaction_type === 'INTEREST_PAYMENT') {
-      const effectiveDate = parseDate(data.effective_date!);
-      const interestDue = currentBillingPrincipal.mul(rate).div(100);
+      // Multi-cycle settlement: walk unsettled cycles in order
+      const unsettledCycles = await getUnsettledCycles(tx, tenantId, loan.id, loan);
+      let remainingAmount = amount;
 
-      if (amount.lte(interestDue)) {
-        // Exact or underpayment — single INTEREST_PAYMENT
+      for (const cycle of unsettledCycles) {
+        if (remainingAmount.lte(0)) break;
+
+        const paymentForCycle = Decimal.min(remainingAmount, cycle.remaining);
         const txn = await tx.transaction.create({
           data: {
             tenantId,
             loanId: loan.id,
             transactionType: 'INTEREST_PAYMENT',
-            amount: amount.toNumber(),
+            amount: paymentForCycle.toNumber(),
             transactionDate,
-            effectiveDate,
+            effectiveDate: cycle.dueDate,
             approvalStatus,
             collectedById: createdById,
             approvedById: isAutoApproved ? createdById : undefined,
@@ -126,57 +131,23 @@ export async function recordTransaction(
           },
         });
         createdTransactions.push(formatTransaction(txn));
+        remainingAmount = remainingAmount.minus(paymentForCycle);
+      }
 
-        // Update lastInterestPaidThrough when auto-approved (only advance forward)
-        if (isAutoApproved) {
-          await tx.loan.updateMany({
-            where: {
-              id: loan.id,
-              tenantId,
-              OR: [
-                { lastInterestPaidThrough: null },
-                { lastInterestPaidThrough: { lt: effectiveDate } },
-              ],
-            },
-            data: { lastInterestPaidThrough: effectiveDate },
-          });
-        }
-      } else {
-        // Overpayment — auto-split
-        const interestPortion = interestDue;
-        const principalPortion = amount.minus(interestDue);
-
-        if (principalPortion.gt(remainingPrincipal)) {
+      // Excess after all unsettled cycles → principal return
+      if (remainingAmount.gt(0)) {
+        if (remainingAmount.gt(remainingPrincipal)) {
           throw AppError.badRequest('Overpayment exceeds remaining principal');
         }
 
-        // Create INTEREST_PAYMENT for interest portion
-        const interestTxn = await tx.transaction.create({
-          data: {
-            tenantId,
-            loanId: loan.id,
-            transactionType: 'INTEREST_PAYMENT',
-            amount: interestPortion.toNumber(),
-            transactionDate,
-            effectiveDate,
-            approvalStatus,
-            collectedById: createdById,
-            approvedById: isAutoApproved ? createdById : undefined,
-            approvedAt: isAutoApproved ? new Date() : undefined,
-            notes: data.notes,
-          },
-        });
-        createdTransactions.push(formatTransaction(interestTxn));
-
-        // Create PRINCIPAL_RETURN for principal portion
-        const newRemaining = remainingPrincipal.minus(principalPortion);
+        const newRemaining = remainingPrincipal.minus(remainingAmount);
 
         const principalTxn = await tx.transaction.create({
           data: {
             tenantId,
             loanId: loan.id,
             transactionType: 'PRINCIPAL_RETURN',
-            amount: principalPortion.toNumber(),
+            amount: remainingAmount.toNumber(),
             transactionDate,
             approvalStatus,
             collectedById: createdById,
@@ -187,9 +158,7 @@ export async function recordTransaction(
         });
         createdTransactions.push(formatTransaction(principalTxn));
 
-        // Side effects only when auto-approved
         if (isAutoApproved) {
-          // Decrement remaining principal with optimistic lock
           const updateResult = await tx.loan.updateMany({
             where: { id: loan.id, tenantId, version: loan.version },
             data: {
@@ -202,32 +171,23 @@ export async function recordTransaction(
             throw AppError.conflict('Loan was modified concurrently, please retry');
           }
 
-          // Insert principal_returns record
           await tx.principalReturn.create({
             data: {
               tenantId,
               loanId: loan.id,
               transactionId: principalTxn.id,
-              amountReturned: principalPortion.toNumber(),
+              amountReturned: remainingAmount.toNumber(),
               remainingPrincipalAfter: newRemaining.toNumber(),
               returnDate: transactionDate,
               createdById,
             },
           });
-
-          // Update lastInterestPaidThrough (only advance forward)
-          await tx.loan.updateMany({
-            where: {
-              id: loan.id,
-              tenantId,
-              OR: [
-                { lastInterestPaidThrough: null },
-                { lastInterestPaidThrough: { lt: effectiveDate } },
-              ],
-            },
-            data: { lastInterestPaidThrough: effectiveDate },
-          });
         }
+      }
+
+      // Recompute lastInterestPaidThrough once at end
+      if (isAutoApproved) {
+        await recomputeLastSettledThrough(tx, tenantId, loan.id, loan);
       }
     } else {
       // PRINCIPAL_RETURN
@@ -457,6 +417,10 @@ async function executeSideEffects(tx: any, tenantId: string, approvedById: strin
       billingPrincipal: true,
       loanType: true,
       totalCollected: true,
+      disbursementDate: true,
+      monthlyDueDay: true,
+      isMigrated: true,
+      lastInterestPaidThrough: true,
     },
   });
 
@@ -528,18 +492,8 @@ async function executeSideEffects(tx: any, tenantId: string, approvedById: strin
       }
     }
   } else if (transaction.transactionType === 'INTEREST_PAYMENT' && transaction.effectiveDate) {
-    // Update lastInterestPaidThrough (only advance forward)
-    await tx.loan.updateMany({
-      where: {
-        id: loan.id,
-        tenantId,
-        OR: [
-          { lastInterestPaidThrough: null },
-          { lastInterestPaidThrough: { lt: transaction.effectiveDate } },
-        ],
-      },
-      data: { lastInterestPaidThrough: transaction.effectiveDate },
-    });
+    // Recompute lastInterestPaidThrough
+    await recomputeLastSettledThrough(tx, tenantId, loan.id, loan);
   }
 }
 
@@ -838,7 +792,6 @@ async function handleCorrectiveTransaction(
     amount: number;
     corrected_transaction_id?: string;
     transaction_date: string;
-    effective_date?: string;
     notes?: string;
   },
 ) {
@@ -889,7 +842,7 @@ async function handleCorrectiveTransaction(
       transactionType: data.transaction_type,
       amount: data.amount,
       transactionDate,
-      effectiveDate: data.effective_date ? parseDate(data.effective_date) : original.effectiveDate,
+      effectiveDate: original.effectiveDate,
       approvalStatus: 'APPROVED',
       correctedTransactionId: data.corrected_transaction_id,
       collectedById: createdById,
@@ -923,7 +876,12 @@ async function executeReversedSideEffects(
   // Re-fetch loan to get current version (the passed loan object may be stale)
   const loan = await tx.loan.findFirst({
     where: { id: loanRef.id, tenantId },
-    select: { id: true, version: true, loanType: true, remainingPrincipal: true, totalCollected: true },
+    select: {
+      id: true, version: true, loanType: true, remainingPrincipal: true, totalCollected: true,
+      disbursementDate: true, monthlyDueDay: true, isMigrated: true,
+      interestRate: true, billingPrincipal: true, principalAmount: true,
+      lastInterestPaidThrough: true,
+    },
   });
   if (!loan) {
     throw AppError.notFound('Loan not found');
@@ -1014,8 +972,10 @@ async function executeReversedSideEffects(
         });
       }
     }
+  } else if (original.transactionType === 'INTEREST_PAYMENT') {
+    // Recompute lastInterestPaidThrough — reversing a payment can un-settle a cycle
+    await recomputeLastSettledThrough(tx, tenantId, loan.id, loan);
   }
-  // INTEREST_PAYMENT — no loan-level side effect
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

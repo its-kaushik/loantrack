@@ -2,6 +2,7 @@ import Decimal from 'decimal.js';
 import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/errors.js';
 import { parseDate, toDateString, addDays, daysBetween, today } from '../utils/date.js';
+import { recomputeLastSettledThrough, getUnsettledCycles } from './loans.service.js';
 
 // ─── imposePenalty ────────────────────────────────────────────────────────────
 
@@ -254,12 +255,17 @@ export async function waiveInterest(
   tenantId: string,
   loanId: string,
   adminId: string,
-  data: { effective_date: string; waive_amount: number; notes?: string },
+  data: { waive_amount: number; notes?: string },
 ) {
   return prisma.$transaction(async (tx) => {
     const loan = await tx.loan.findFirst({
       where: { id: loanId, tenantId },
-      select: { id: true, loanType: true, status: true },
+      select: {
+        id: true, loanType: true, status: true,
+        disbursementDate: true, monthlyDueDay: true, isMigrated: true,
+        interestRate: true, billingPrincipal: true, principalAmount: true,
+        lastInterestPaidThrough: true,
+      },
     });
 
     if (!loan) {
@@ -274,7 +280,12 @@ export async function waiveInterest(
       throw AppError.badRequest(`Cannot waive interest on a ${loan.status} loan`);
     }
 
-    const effectiveDate = parseDate(data.effective_date);
+    // Auto-compute effective_date from first unsettled cycle
+    const unsettledCycles = await getUnsettledCycles(tx, tenantId, loanId, loan);
+    if (unsettledCycles.length === 0) {
+      throw AppError.badRequest('No unsettled interest cycles to waive');
+    }
+    const effectiveDate = unsettledCycles[0]!.dueDate;
     const txnDate = parseDate(today());
 
     const transaction = await tx.transaction.create({
@@ -292,6 +303,9 @@ export async function waiveInterest(
         notes: data.notes,
       },
     });
+
+    // Recompute lastInterestPaidThrough — waiver may settle a cycle
+    await recomputeLastSettledThrough(tx, tenantId, loanId, loan);
 
     return {
       id: transaction.id,
