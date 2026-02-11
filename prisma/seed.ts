@@ -151,7 +151,6 @@ async function main() {
   const mlRate = new Decimal(2);
   const mlDueDay = mlDisbursementDate.getUTCDate(); // day 1
   const mlBillingPrincipal = mlPrincipal; // no principal returned yet
-  const mlAdvanceInterest = mlBillingPrincipal.mul(mlRate).div(100);
 
   // Generate loan number
   const mlSeqRows: Array<{ current_value: number }> = await prisma.$queryRaw`
@@ -176,7 +175,7 @@ async function main() {
       monthlyDueDay: mlDueDay,
       remainingPrincipal: mlPrincipal,
       billingPrincipal: mlBillingPrincipal,
-      advanceInterestAmount: mlAdvanceInterest,
+      advanceInterestAmount: 0,
       status: 'ACTIVE',
       createdById: admin.id,
     },
@@ -197,22 +196,6 @@ async function main() {
     },
   });
   console.log('  Created DISBURSEMENT transaction');
-
-  // Advance interest transaction
-  await prisma.transaction.create({
-    data: {
-      tenantId: tenant.id,
-      loanId: monthlyLoan.id,
-      transactionType: 'ADVANCE_INTEREST',
-      amount: mlAdvanceInterest,
-      transactionDate: mlDisbursementDate,
-      effectiveDate: mlDisbursementDate,
-      approvalStatus: 'APPROVED',
-      approvedById: admin.id,
-      approvedAt: mlDisbursementDate,
-    },
-  });
-  console.log(`  Created ADVANCE_INTEREST transaction (Rs ${mlAdvanceInterest.toFixed(2)})`);
 
   // 7. Daily Loan — Rs 50,000 at 5% for 100 days
   const dlDisbursementDate = new Date('2026-01-01');

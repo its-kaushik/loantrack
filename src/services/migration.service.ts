@@ -58,11 +58,6 @@ export async function migrateMonthlyLoan(
     // Generate loan number
     const loanNumber = await generateLoanNumber(tx, tenantId, year, 'MONTHLY');
 
-    // Calculate advance interest (informational — no transaction created)
-    const principal = new Decimal(data.principal_amount);
-    const rate = new Decimal(data.interest_rate);
-    const advanceInterest = principal.mul(rate).div(100);
-
     // Parse last_interest_paid_through
     const lastInterestPaidThrough = parseDate(data.last_interest_paid_through);
 
@@ -80,7 +75,7 @@ export async function migrateMonthlyLoan(
         monthlyDueDay,
         remainingPrincipal: data.remaining_principal,
         billingPrincipal: data.remaining_principal,
-        advanceInterestAmount: advanceInterest.toNumber(),
+        advanceInterestAmount: 0,
         lastInterestPaidThrough,
         isMigrated: true,
         guarantorId: data.guarantor_id,
@@ -111,7 +106,7 @@ export async function migrateMonthlyLoan(
       lastInterestPaidThrough: toDateString(lastInterestPaidThrough),
       remainingPrincipal: Number(loan.remainingPrincipal),
       billingPrincipal: Number(loan.billingPrincipal),
-      advanceInterestAmount: advanceInterest.toNumber(),
+      advanceInterestAmount: 0,
       expectedMonths: loan.expectedMonths,
       monthlyDueDay: loan.monthlyDueDay,
       collateralDescription: loan.collateralDescription,

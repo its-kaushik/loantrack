@@ -115,9 +115,6 @@ export async function getTodaySummary(tx: TxClient, tenantId: string, todayStr: 
     WHERE l.tenant_id = ${tenantId}::uuid
       AND l.loan_type = 'MONTHLY'
       AND l.status = 'ACTIVE'
-      AND LEAST(l.monthly_due_day,
-        EXTRACT(DAY FROM DATE_TRUNC('month', ${todayStr}::date) + INTERVAL '1 month' - INTERVAL '1 day'))
-        = EXTRACT(DAY FROM ${todayStr}::date)
       AND (l.last_interest_paid_through IS NULL OR l.last_interest_paid_through < (${todayStr}::date - INTERVAL '1 month'))
   `;
   const monthlyInterestDueToday = monthlyDueRows.map((r) => ({

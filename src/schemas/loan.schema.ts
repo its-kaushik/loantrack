@@ -117,7 +117,7 @@ export const monthlyLoanDetailResponseSchema = loanResponseSchema
     lastInterestPaidThrough: z.string().nullable().openapi({ example: '2026-02-15' }),
     remainingPrincipal: z.number().openapi({ example: 100000 }),
     billingPrincipal: z.number().openapi({ example: 100000 }),
-    advanceInterestAmount: z.number().openapi({ example: 2500 }),
+    advanceInterestAmount: z.number().openapi({ example: 0 }),
     expectedMonths: z.number().nullable().openapi({ example: 12 }),
     monthlyDueDay: z.number().openapi({ example: 15 }),
     collateralDescription: z.string().nullable().openapi({ example: 'Gold necklace' }),
