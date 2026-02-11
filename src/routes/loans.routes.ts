@@ -63,17 +63,17 @@ router.get(
   loansController.getLoanHandler,
 );
 
-// ADMIN only for transactions and payment status
+// ADMIN + COLLECTOR for transactions and payment status
 router.get(
   '/:id/transactions',
-  requireRole('ADMIN'),
+  requireRole('ADMIN', 'COLLECTOR'),
   validate({ params: loanIdParamSchema, query: listLoanTransactionsQuerySchema }),
   loansController.getLoanTransactionsHandler,
 );
 
 router.get(
   '/:id/payment-status',
-  requireRole('ADMIN'),
+  requireRole('ADMIN', 'COLLECTOR'),
   validate({ params: loanIdParamSchema }),
   loansController.getPaymentStatusHandler,
 );
@@ -120,10 +120,10 @@ router.post(
   penaltiesController.imposePenaltyHandler,
 );
 
-// ADMIN only can list penalties
+// ADMIN + COLLECTOR can list penalties
 router.get(
   '/:id/penalties',
-  requireRole('ADMIN'),
+  requireRole('ADMIN', 'COLLECTOR'),
   validate({ params: loanIdParamSchema, query: listPenaltiesQuerySchema }),
   penaltiesController.listPenaltiesHandler,
 );
