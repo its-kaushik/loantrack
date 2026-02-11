@@ -14,12 +14,12 @@ function toDecimalStr(val: unknown): string {
 // ─── Missed Collections Today ─────────────────────────────────────────────
 
 export interface MissedCollectionsTodayResult {
-  missedToday: Array<{ loanId: string; borrowerName: string; borrowerPhone: string; dailyPaymentAmount: string }>;
+  missedToday: Array<{ loanId: string; borrowerName: string; borrowerPhone: string; dailyPaymentAmount: string; disbursementDate: string }>;
 }
 
 export async function getMissedCollectionsToday(tx: TxClient, tenantId: string, todayStr: string): Promise<MissedCollectionsTodayResult> {
-  const missedRows: Array<{ loan_id: string; borrower_name: string; borrower_phone: string; daily_payment_amount: unknown }> = await tx.$queryRaw`
-    SELECT l.id AS loan_id, c.full_name AS borrower_name, c.phone AS borrower_phone, l.daily_payment_amount
+  const missedRows: Array<{ loan_id: string; borrower_name: string; borrower_phone: string; daily_payment_amount: unknown; disbursement_date: unknown }> = await tx.$queryRaw`
+    SELECT l.id AS loan_id, c.full_name AS borrower_name, c.phone AS borrower_phone, l.daily_payment_amount, l.disbursement_date
     FROM loans l
     JOIN customers c ON c.id = l.borrower_id
     WHERE l.tenant_id = ${tenantId}::uuid
@@ -39,6 +39,7 @@ export async function getMissedCollectionsToday(tx: TxClient, tenantId: string, 
     borrowerName: r.borrower_name,
     borrowerPhone: r.borrower_phone,
     dailyPaymentAmount: toDecimalStr(r.daily_payment_amount),
+    disbursementDate: String(r.disbursement_date).substring(0, 10),
   }));
 
   return { missedToday };
@@ -50,7 +51,7 @@ export interface TodaySummaryResult {
   activeDailyLoanCount: number;
   expectedCollections: { count: number; totalAmount: string };
   receivedCollections: { count: number; totalAmount: string };
-  missedToday: Array<{ loanId: string; borrowerName: string; borrowerPhone: string; dailyPaymentAmount: string }>;
+  missedToday: Array<{ loanId: string; borrowerName: string; borrowerPhone: string; dailyPaymentAmount: string; disbursementDate: string }>;
   monthlyInterestDueToday: Array<{ loanId: string; borrowerName: string; interestAmount: string; dueDate: string }>;
   pendingApprovalsCount: number;
   totalCollectedToday: string;

@@ -35,6 +35,7 @@ export const todaySummaryResponseSchema = z
       loanId: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
       borrowerName: z.string().openapi({ example: 'John Doe' }),
       dailyPaymentAmount: z.string().openapi({ example: '2500.00' }),
+      disbursementDate: z.string().openapi({ example: '2026-01-01' }),
     })),
     monthlyInterestDueToday: z.array(z.object({
       loanId: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
