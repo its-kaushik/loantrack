@@ -290,7 +290,8 @@ export async function getDefaulters(tx: TxClient, tenantId: string): Promise<Def
       g.full_name AS guarantor_name, g.phone AS guarantor_phone,
       CASE
         WHEN l.loan_type = 'MONTHLY' THEN l.remaining_principal
-        ELSE GREATEST(l.principal_amount - l.total_collected, 0)
+        ELSE l.principal_amount * GREATEST(l.total_repayment_amount - l.total_collected, 0)
+             / NULLIF(l.total_repayment_amount, 0)
       END AS outstanding_amount,
       l.defaulted_at, l.written_off_at
     FROM loans l

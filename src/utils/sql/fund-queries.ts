@@ -39,7 +39,10 @@ export async function computeFundSummary(tx: TxClient, tenantId: string): Promis
       AND status = 'ACTIVE'
   `;
   const [dailyDeployed]: [{ total: unknown }] = await tx.$queryRaw`
-    SELECT COALESCE(SUM(GREATEST(principal_amount - total_collected, 0)), 0) AS total
+    SELECT COALESCE(SUM(
+      principal_amount * GREATEST(total_repayment_amount - total_collected, 0)
+      / NULLIF(total_repayment_amount, 0)
+    ), 0) AS total
     FROM loans
     WHERE tenant_id = ${tenantId}::uuid
       AND loan_type = 'DAILY'
@@ -58,9 +61,12 @@ export async function computeFundSummary(tx: TxClient, tenantId: string): Promis
       AND t.approval_status = 'APPROVED'
       AND l.status != 'CANCELLED'
   `;
-  // Daily: SUM(GREATEST(total_collected - principal_amount, 0)) per non-cancelled daily loan
+  // Daily: proportional interest recognition per non-cancelled daily loan
   const [dailyInterest]: [{ total: unknown }] = await tx.$queryRaw`
-    SELECT COALESCE(SUM(GREATEST(total_collected - principal_amount, 0)), 0) AS total
+    SELECT COALESCE(SUM(
+      total_collected * (total_repayment_amount - principal_amount)
+      / NULLIF(total_repayment_amount, 0)
+    ), 0) AS total
     FROM loans
     WHERE tenant_id = ${tenantId}::uuid
       AND loan_type = 'DAILY'
@@ -89,7 +95,10 @@ export async function computeFundSummary(tx: TxClient, tenantId: string): Promis
       AND status IN ('DEFAULTED', 'WRITTEN_OFF')
   `;
   const [dailyDefaults]: [{ total: unknown }] = await tx.$queryRaw`
-    SELECT COALESCE(SUM(GREATEST(principal_amount - total_collected, 0)), 0) AS total
+    SELECT COALESCE(SUM(
+      principal_amount * GREATEST(total_repayment_amount - total_collected, 0)
+      / NULLIF(total_repayment_amount, 0)
+    ), 0) AS total
     FROM loans
     WHERE tenant_id = ${tenantId}::uuid
       AND loan_type = 'DAILY'
@@ -272,7 +281,10 @@ export async function computeProfitLoss(
       AND status = 'ACTIVE'
   `;
   const [dailyDeployed]: [{ total: unknown }] = await tx.$queryRaw`
-    SELECT COALESCE(SUM(GREATEST(principal_amount - total_collected, 0)), 0) AS total
+    SELECT COALESCE(SUM(
+      principal_amount * GREATEST(total_repayment_amount - total_collected, 0)
+      / NULLIF(total_repayment_amount, 0)
+    ), 0) AS total
     FROM loans
     WHERE tenant_id = ${tenantId}::uuid
       AND loan_type = 'DAILY'
@@ -293,38 +305,39 @@ export async function computeProfitLoss(
       AND t.transaction_date BETWEEN ${fromDate}::date AND ${toDate}::date
   `;
 
-  // Daily interest: marginal approach per loan
-  // For each daily loan: MAX(collected_through_toDate - principal, 0) - MAX(collected_before_fromDate - principal, 0)
-  const dailyInterestRows: Array<{ interest: unknown }> = await tx.$queryRaw`
-    SELECT
-      GREATEST(
-        LEAST(l.total_collected,
-          COALESCE((SELECT SUM(t.amount) FROM transactions t
-            WHERE t.loan_id = l.id AND t.approval_status = 'APPROVED'
-            AND t.transaction_type = 'DAILY_COLLECTION'
-            AND t.transaction_date <= ${toDate}::date), 0)
-        ) - l.principal_amount,
-        0
-      )
+  // Daily interest: proportional marginal approach using JOINs (avoids correlated subqueries)
+  const [dailyInterestRow]: [{ total: unknown }] = await tx.$queryRaw`
+    SELECT COALESCE(SUM(
+      LEAST(l.total_collected, COALESCE(ct.collected_through, 0))
+        * (l.total_repayment_amount - l.principal_amount) / NULLIF(l.total_repayment_amount, 0)
       -
-      GREATEST(
-        LEAST(l.total_collected,
-          COALESCE((SELECT SUM(t.amount) FROM transactions t
-            WHERE t.loan_id = l.id AND t.approval_status = 'APPROVED'
-            AND t.transaction_type = 'DAILY_COLLECTION'
-            AND t.transaction_date < ${fromDate}::date), 0)
-        ) - l.principal_amount,
-        0
-      ) AS interest
+      LEAST(l.total_collected, COALESCE(cb.collected_before, 0))
+        * (l.total_repayment_amount - l.principal_amount) / NULLIF(l.total_repayment_amount, 0)
+    ), 0) AS total
     FROM loans l
+    LEFT JOIN (
+      SELECT loan_id, SUM(amount) AS collected_through
+      FROM transactions
+      WHERE tenant_id = ${tenantId}::uuid
+        AND approval_status = 'APPROVED'
+        AND transaction_type = 'DAILY_COLLECTION'
+        AND transaction_date <= ${toDate}::date
+      GROUP BY loan_id
+    ) ct ON ct.loan_id = l.id
+    LEFT JOIN (
+      SELECT loan_id, SUM(amount) AS collected_before
+      FROM transactions
+      WHERE tenant_id = ${tenantId}::uuid
+        AND approval_status = 'APPROVED'
+        AND transaction_type = 'DAILY_COLLECTION'
+        AND transaction_date < ${fromDate}::date
+      GROUP BY loan_id
+    ) cb ON cb.loan_id = l.id
     WHERE l.tenant_id = ${tenantId}::uuid
       AND l.loan_type = 'DAILY'
       AND l.status != 'CANCELLED'
   `;
-  let dailyInterestTotal = new Decimal(0);
-  for (const row of dailyInterestRows) {
-    dailyInterestTotal = dailyInterestTotal.plus(toDecimal(row.interest));
-  }
+  const dailyInterestTotal = toDecimal(dailyInterestRow.total);
 
   // Penalties within date range
   const [penaltiesInRange]: [{ total: unknown }] = await tx.$queryRaw`
@@ -351,7 +364,10 @@ export async function computeProfitLoss(
       AND defaulted_at BETWEEN ${fromDate}::date AND ${toDate}::date
   `;
   const [dailyDefaultsInRange]: [{ total: unknown }] = await tx.$queryRaw`
-    SELECT COALESCE(SUM(GREATEST(principal_amount - total_collected, 0)), 0) AS total
+    SELECT COALESCE(SUM(
+      principal_amount * GREATEST(total_repayment_amount - total_collected, 0)
+      / NULLIF(total_repayment_amount, 0)
+    ), 0) AS total
     FROM loans
     WHERE tenant_id = ${tenantId}::uuid
       AND loan_type = 'DAILY'

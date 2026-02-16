@@ -115,7 +115,8 @@ export async function getLoanBook(tenantId: string) {
                 WHERE t.loan_id = l.id
                 AND t.transaction_type IN ('INTEREST_PAYMENT', 'ADVANCE_INTEREST')
                 AND t.approval_status = 'APPROVED'), 0)
-            ELSE GREATEST(l.total_collected - l.principal_amount, 0)
+            ELSE l.total_collected * (l.total_repayment_amount - l.principal_amount)
+                 / NULLIF(l.total_repayment_amount, 0)
           END AS interest_earned,
           g.full_name AS guarantor_name
         FROM loans l
