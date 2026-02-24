@@ -3,6 +3,8 @@ import Decimal from 'decimal.js';
 export interface FundSummaryResult {
   totalCapitalInvested: Decimal;
   moneyDeployed: Decimal;
+  totalDisbursed: Decimal;
+  totalReceived: Decimal;
   totalInterestEarned: Decimal;
   moneyLostToDefaults: Decimal;
   totalExpenses: Decimal;
@@ -151,9 +153,15 @@ export async function computeFundSummary(tx: TxClient, tenantId: string): Promis
   // 8. Cash in Hand
   const cashInHand = await computeCashInHand(tx, tenantId);
 
+  // All-time disbursed & received (no date filter for the cumulative variant)
+  const totalDisbursed = new Decimal(0);
+  const totalReceived = new Decimal(0);
+
   return {
     totalCapitalInvested,
     moneyDeployed,
+    totalDisbursed,
+    totalReceived,
     totalInterestEarned,
     moneyLostToDefaults,
     totalExpenses,
@@ -292,6 +300,32 @@ export async function computeProfitLoss(
   `;
   const moneyDeployed = toDecimal(monthlyDeployed.total).plus(toDecimal(dailyDeployed.total));
 
+  // 2b. Total Disbursed in range (loans given out)
+  const [disbInRange]: [{ total: unknown }] = await tx.$queryRaw`
+    SELECT COALESCE(SUM(t.amount), 0) AS total
+    FROM transactions t
+    JOIN loans l ON l.id = t.loan_id
+    WHERE t.tenant_id = ${tenantId}::uuid
+      AND t.transaction_type = 'DISBURSEMENT'
+      AND t.approval_status = 'APPROVED'
+      AND l.status != 'CANCELLED'
+      AND t.transaction_date BETWEEN ${fromDate}::date AND ${toDate}::date
+  `;
+  const totalDisbursed = toDecimal(disbInRange.total);
+
+  // 2c. Total Received in range (all money-in collections)
+  const [recvInRange]: [{ total: unknown }] = await tx.$queryRaw`
+    SELECT COALESCE(SUM(t.amount), 0) AS total
+    FROM transactions t
+    JOIN loans l ON l.id = t.loan_id
+    WHERE t.tenant_id = ${tenantId}::uuid
+      AND t.transaction_type IN ('ADVANCE_INTEREST', 'INTEREST_PAYMENT', 'PRINCIPAL_RETURN', 'DAILY_COLLECTION', 'PENALTY', 'GUARANTOR_PAYMENT')
+      AND t.approval_status = 'APPROVED'
+      AND l.status != 'CANCELLED'
+      AND t.transaction_date BETWEEN ${fromDate}::date AND ${toDate}::date
+  `;
+  const totalReceived = toDecimal(recvInRange.total);
+
   // 3. Total Interest Earned (date-filtered)
   // Monthly interest payments within date range
   const [monthlyInterest]: [{ total: unknown }] = await tx.$queryRaw`
@@ -428,6 +462,8 @@ export async function computeProfitLoss(
   return {
     totalCapitalInvested,
     moneyDeployed,
+    totalDisbursed,
+    totalReceived,
     totalInterestEarned,
     moneyLostToDefaults,
     totalExpenses,

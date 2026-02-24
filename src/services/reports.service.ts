@@ -21,6 +21,8 @@ export async function getProfitLoss(tenantId: string, from: string, to: string) 
       return {
         totalCapitalInvested: summary.totalCapitalInvested.toFixed(2),
         moneyDeployed: summary.moneyDeployed.toFixed(2),
+        totalDisbursed: summary.totalDisbursed.toFixed(2),
+        totalReceived: summary.totalReceived.toFixed(2),
         totalInterestEarned: summary.totalInterestEarned.toFixed(2),
         moneyLostToDefaults: summary.moneyLostToDefaults.toFixed(2),
         totalExpenses: summary.totalExpenses.toFixed(2),

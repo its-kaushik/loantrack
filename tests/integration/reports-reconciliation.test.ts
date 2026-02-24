@@ -225,7 +225,7 @@ afterAll(async () => {
 // ─── P&L Report ─────────────────────────────────────────────────────────
 
 describe('P&L Report — GET /reports/profit-loss', () => {
-  it('returns all 8 metrics for full date range → 200', async () => {
+  it('returns all 10 metrics for full date range → 200', async () => {
     const res = await request
       .get('/api/v1/reports/profit-loss?from=2025-01-01&to=2026-12-31')
       .set('Authorization', `Bearer ${adminAccessToken}`);
@@ -234,8 +234,8 @@ describe('P&L Report — GET /reports/profit-loss', () => {
     expect(res.body.success).toBe(true);
     const data = res.body.data;
     const fields = [
-      'totalCapitalInvested', 'moneyDeployed', 'totalInterestEarned',
-      'moneyLostToDefaults', 'totalExpenses', 'revenueForgone',
+      'totalCapitalInvested', 'moneyDeployed', 'totalDisbursed', 'totalReceived',
+      'totalInterestEarned', 'moneyLostToDefaults', 'totalExpenses', 'revenueForgone',
       'netProfit', 'cashInHand',
     ];
     for (const field of fields) {
