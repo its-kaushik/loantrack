@@ -91,7 +91,8 @@ export const profitLossResponseSchema = z
   .object({
     totalCapitalInvested: z.string().openapi({ example: '500000.00' }),
     moneyDeployed: z.string().openapi({ example: '350000.00' }),
-    totalDisbursed: z.string().openapi({ example: '200000.00' }),
+    dailyDisbursed: z.string().openapi({ example: '120000.00' }),
+    monthlyDisbursed: z.string().openapi({ example: '80000.00' }),
     totalReceived: z.string().openapi({ example: '150000.00' }),
     totalInterestEarned: z.string().openapi({ example: '25000.00' }),
     moneyLostToDefaults: z.string().openapi({ example: '10000.00' }),
