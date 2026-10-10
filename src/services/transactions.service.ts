@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import Decimal from 'decimal.js';
+import type { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/errors.js';
 import { parseDate, toDateString } from '../utils/date.js';
@@ -6,216 +8,193 @@ import { recomputeLastSettledThrough, getUnsettledCycles } from './loans.service
 
 // ─── recordTransaction ─────────────────────────────────────────────────────
 
+export interface RecordTransactionData {
+  loan_id: string;
+  transaction_type: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION' | 'PENALTY' | 'GUARANTOR_PAYMENT';
+  amount: number;
+  transaction_date: string;
+  penalty_id?: string;
+  corrected_transaction_id?: string;
+  notes?: string;
+}
+
 export async function recordTransaction(
   tenantId: string,
   createdById: string,
   callerRole: 'ADMIN' | 'COLLECTOR',
-  data: {
-    loan_id: string;
-    transaction_type: 'INTEREST_PAYMENT' | 'PRINCIPAL_RETURN' | 'DAILY_COLLECTION' | 'PENALTY' | 'GUARANTOR_PAYMENT';
-    amount: number;
-    transaction_date: string;
-    penalty_id?: string;
-    corrected_transaction_id?: string;
-    notes?: string;
-  },
+  data: RecordTransactionData,
+) {
+  return prisma.$transaction((tx) => recordTransactionInTx(tx, tenantId, createdById, callerRole, data));
+}
+
+/**
+ * Records a payment inside a transaction the caller already holds, so it can be
+ * combined atomically with other changes (fixing an entry undoes the wrong one
+ * and records its replacement together).
+ *
+ * `options.collectedById` attributes the rows to someone other than the caller —
+ * used when an admin corrects an entry a collector made.
+ */
+export async function recordTransactionInTx(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  createdById: string,
+  callerRole: 'ADMIN' | 'COLLECTOR',
+  data: RecordTransactionData,
+  options: { collectedById?: string } = {},
 ) {
   const approvalStatus = callerRole === 'ADMIN' ? 'APPROVED' : 'PENDING';
   const isAutoApproved = callerRole === 'ADMIN';
+  const collectedById = options.collectedById ?? createdById;
+  // Shared by every row this payment creates, so it can later be corrected as a whole
+  const entryId = randomUUID();
 
-  return prisma.$transaction(async (tx) => {
-    // Fetch loan with version for optimistic locking
-    const loan = await tx.loan.findFirst({
-      where: { id: data.loan_id, tenantId },
-      select: {
-        id: true,
-        status: true,
-        loanType: true,
-        interestRate: true,
-        remainingPrincipal: true,
-        billingPrincipal: true,
-        principalAmount: true,
-        version: true,
-        tenantId: true,
-        totalCollected: true,
-        totalRepaymentAmount: true,
-        disbursementDate: true,
-        monthlyDueDay: true,
-        isMigrated: true,
-        lastInterestPaidThrough: true,
-      },
+  // Fetch loan with version for optimistic locking
+  const loan = await tx.loan.findFirst({
+    where: { id: data.loan_id, tenantId },
+    select: {
+      id: true,
+      status: true,
+      loanType: true,
+      interestRate: true,
+      remainingPrincipal: true,
+      billingPrincipal: true,
+      principalAmount: true,
+      version: true,
+      tenantId: true,
+      totalCollected: true,
+      totalRepaymentAmount: true,
+      disbursementDate: true,
+      monthlyDueDay: true,
+      isMigrated: true,
+      lastInterestPaidThrough: true,
+    },
+  });
+
+  if (!loan) {
+    throw AppError.notFound('Loan not found');
+  }
+
+  // Expanded loan status validation
+  if (loan.status === 'CANCELLED' || loan.status === 'CLOSED' || loan.status === 'WRITTEN_OFF') {
+    throw AppError.badRequest(`Cannot record transactions on a ${loan.status} loan`);
+  }
+  // ACTIVE and DEFAULTED are accepted
+
+  // Corrective transaction flow
+  if (data.corrected_transaction_id) {
+    if (callerRole !== 'ADMIN') {
+      throw AppError.forbidden('Only admins can create corrective transactions');
+    }
+    return handleCorrectiveTransaction(tx, tenantId, createdById, loan, data);
+  }
+
+  // GUARANTOR_PAYMENT routing
+  if (data.transaction_type === 'GUARANTOR_PAYMENT') {
+    if (loan.status !== 'DEFAULTED') {
+      throw AppError.badRequest('GUARANTOR_PAYMENT is only allowed on DEFAULTED loans');
+    }
+    return handleGuarantorPayment(tx, tenantId, createdById, loan, data, approvalStatus, isAutoApproved, {
+      entryId,
+      collectedById,
     });
+  }
 
-    if (!loan) {
-      throw AppError.notFound('Loan not found');
+  if (data.transaction_type === 'DAILY_COLLECTION') {
+    if (loan.loanType !== 'DAILY') {
+      throw AppError.badRequest('DAILY_COLLECTION is only for DAILY loans');
     }
+    return handleDailyCollection(tx, tenantId, createdById, loan, data, approvalStatus, isAutoApproved, {
+      entryId,
+      collectedById,
+    });
+  }
 
-    // Expanded loan status validation
-    if (loan.status === 'CANCELLED' || loan.status === 'CLOSED' || loan.status === 'WRITTEN_OFF') {
-      throw AppError.badRequest(`Cannot record transactions on a ${loan.status} loan`);
+  if (data.transaction_type === 'PENALTY') {
+    if (loan.loanType !== 'DAILY') {
+      throw AppError.badRequest('PENALTY payments are only for DAILY loans');
     }
-    // ACTIVE and DEFAULTED are accepted
+    return handlePenaltyPayment(tx, tenantId, createdById, loan, data, approvalStatus, isAutoApproved, {
+      entryId,
+      collectedById,
+    });
+  }
 
-    // Corrective transaction flow
-    if (data.corrected_transaction_id) {
-      if (callerRole !== 'ADMIN') {
-        throw AppError.forbidden('Only admins can create corrective transactions');
-      }
-      return handleCorrectiveTransaction(tx, tenantId, createdById, loan, data);
-    }
+  if (loan.loanType !== 'MONTHLY') {
+    throw AppError.badRequest('INTEREST_PAYMENT and PRINCIPAL_RETURN are only for MONTHLY loans');
+  }
 
-    // GUARANTOR_PAYMENT routing
-    if (data.transaction_type === 'GUARANTOR_PAYMENT') {
-      if (loan.status !== 'DEFAULTED') {
-        throw AppError.badRequest('GUARANTOR_PAYMENT is only allowed on DEFAULTED loans');
-      }
-      return handleGuarantorPayment(tx, tenantId, createdById, loan, data, approvalStatus, isAutoApproved);
-    }
+  const transactionDate = parseDate(data.transaction_date);
+  const amount = new Decimal(data.amount);
+  const remainingPrincipal = new Decimal(loan.remainingPrincipal!.toString());
 
-    if (data.transaction_type === 'DAILY_COLLECTION') {
-      if (loan.loanType !== 'DAILY') {
-        throw AppError.badRequest('DAILY_COLLECTION is only for DAILY loans');
-      }
-      return handleDailyCollection(tx, tenantId, createdById, loan, data, approvalStatus, isAutoApproved);
-    }
+  const createdTransactions: Array<{
+    id: string;
+    loanId: string;
+    transactionType: string;
+    amount: number;
+    transactionDate: string;
+    effectiveDate: string | null;
+    approvalStatus: string;
+    notes: string | null;
+    createdAt: string;
+  }> = [];
 
-    if (data.transaction_type === 'PENALTY') {
-      if (loan.loanType !== 'DAILY') {
-        throw AppError.badRequest('PENALTY payments are only for DAILY loans');
-      }
-      return handlePenaltyPayment(tx, tenantId, createdById, loan, data, approvalStatus, isAutoApproved);
-    }
+  if (data.transaction_type === 'INTEREST_PAYMENT') {
+    // Multi-cycle settlement: walk unsettled cycles in order
+    const unsettledCycles = await getUnsettledCycles(tx, tenantId, loan.id, loan);
+    let remainingAmount = amount;
 
-    if (loan.loanType !== 'MONTHLY') {
-      throw AppError.badRequest('INTEREST_PAYMENT and PRINCIPAL_RETURN are only for MONTHLY loans');
-    }
+    for (const cycle of unsettledCycles) {
+      if (remainingAmount.lte(0)) break;
 
-    const transactionDate = parseDate(data.transaction_date);
-    const amount = new Decimal(data.amount);
-    const remainingPrincipal = new Decimal(loan.remainingPrincipal!.toString());
-
-    const createdTransactions: Array<{
-      id: string;
-      loanId: string;
-      transactionType: string;
-      amount: number;
-      transactionDate: string;
-      effectiveDate: string | null;
-      approvalStatus: string;
-      notes: string | null;
-      createdAt: string;
-    }> = [];
-
-    if (data.transaction_type === 'INTEREST_PAYMENT') {
-      // Multi-cycle settlement: walk unsettled cycles in order
-      const unsettledCycles = await getUnsettledCycles(tx, tenantId, loan.id, loan);
-      let remainingAmount = amount;
-
-      for (const cycle of unsettledCycles) {
-        if (remainingAmount.lte(0)) break;
-
-        const paymentForCycle = Decimal.min(remainingAmount, cycle.remaining);
-        const txn = await tx.transaction.create({
-          data: {
-            tenantId,
-            loanId: loan.id,
-            transactionType: 'INTEREST_PAYMENT',
-            amount: paymentForCycle.toNumber(),
-            transactionDate,
-            effectiveDate: cycle.dueDate,
-            approvalStatus,
-            collectedById: createdById,
-            approvedById: isAutoApproved ? createdById : undefined,
-            approvedAt: isAutoApproved ? new Date() : undefined,
-            notes: data.notes,
-          },
-        });
-        createdTransactions.push(formatTransaction(txn));
-        remainingAmount = remainingAmount.minus(paymentForCycle);
-      }
-
-      // Excess after all unsettled cycles → principal return
-      if (remainingAmount.gt(0)) {
-        if (remainingAmount.gt(remainingPrincipal)) {
-          throw AppError.badRequest('Overpayment exceeds remaining principal');
-        }
-
-        const newRemaining = remainingPrincipal.minus(remainingAmount);
-
-        const principalTxn = await tx.transaction.create({
-          data: {
-            tenantId,
-            loanId: loan.id,
-            transactionType: 'PRINCIPAL_RETURN',
-            amount: remainingAmount.toNumber(),
-            transactionDate,
-            approvalStatus,
-            collectedById: createdById,
-            approvedById: isAutoApproved ? createdById : undefined,
-            approvedAt: isAutoApproved ? new Date() : undefined,
-            notes: data.notes ? `Auto-split: ${data.notes}` : 'Auto-split from overpayment',
-          },
-        });
-        createdTransactions.push(formatTransaction(principalTxn));
-
-        if (isAutoApproved) {
-          const updateResult = await tx.loan.updateMany({
-            where: { id: loan.id, tenantId, version: loan.version },
-            data: {
-              remainingPrincipal: newRemaining.toNumber(),
-              billingPrincipal: newRemaining.toNumber(),
-              version: { increment: 1 },
-            },
-          });
-          if (updateResult.count === 0) {
-            throw AppError.conflict('Loan was modified concurrently, please retry');
-          }
-
-          await tx.principalReturn.create({
-            data: {
-              tenantId,
-              loanId: loan.id,
-              transactionId: principalTxn.id,
-              amountReturned: remainingAmount.toNumber(),
-              remainingPrincipalAfter: newRemaining.toNumber(),
-              returnDate: transactionDate,
-              createdById,
-            },
-          });
-        }
-      }
-
-      // Recompute lastInterestPaidThrough once at end
-      if (isAutoApproved) {
-        await recomputeLastSettledThrough(tx, tenantId, loan.id, loan);
-      }
-    } else {
-      // PRINCIPAL_RETURN
-      if (amount.gt(remainingPrincipal)) {
-        throw AppError.badRequest('Amount exceeds remaining principal');
-      }
-
-      const newRemaining = remainingPrincipal.minus(amount);
-
+      const paymentForCycle = Decimal.min(remainingAmount, cycle.remaining);
       const txn = await tx.transaction.create({
         data: {
           tenantId,
           loanId: loan.id,
-          transactionType: 'PRINCIPAL_RETURN',
-          amount: amount.toNumber(),
+          transactionType: 'INTEREST_PAYMENT',
+          amount: paymentForCycle.toNumber(),
           transactionDate,
+          effectiveDate: cycle.dueDate,
           approvalStatus,
-          collectedById: createdById,
+          collectedById,
+          entryId,
           approvedById: isAutoApproved ? createdById : undefined,
           approvedAt: isAutoApproved ? new Date() : undefined,
           notes: data.notes,
         },
       });
       createdTransactions.push(formatTransaction(txn));
+      remainingAmount = remainingAmount.minus(paymentForCycle);
+    }
 
-      // Side effects only when auto-approved
+    // Excess after all unsettled cycles → principal return
+    if (remainingAmount.gt(0)) {
+      if (remainingAmount.gt(remainingPrincipal)) {
+        throw AppError.badRequest('Overpayment exceeds remaining principal');
+      }
+
+      const newRemaining = remainingPrincipal.minus(remainingAmount);
+
+      const principalTxn = await tx.transaction.create({
+        data: {
+          tenantId,
+          loanId: loan.id,
+          transactionType: 'PRINCIPAL_RETURN',
+          amount: remainingAmount.toNumber(),
+          transactionDate,
+          approvalStatus,
+          collectedById,
+          entryId,
+          approvedById: isAutoApproved ? createdById : undefined,
+          approvedAt: isAutoApproved ? new Date() : undefined,
+          notes: data.notes ? `Auto-split: ${data.notes}` : 'Auto-split from overpayment',
+        },
+      });
+      createdTransactions.push(formatTransaction(principalTxn));
+
       if (isAutoApproved) {
-        // Decrement remaining principal with optimistic lock
         const updateResult = await tx.loan.updateMany({
           where: { id: loan.id, tenantId, version: loan.version },
           data: {
@@ -228,13 +207,12 @@ export async function recordTransaction(
           throw AppError.conflict('Loan was modified concurrently, please retry');
         }
 
-        // Insert principal_returns record
         await tx.principalReturn.create({
           data: {
             tenantId,
             loanId: loan.id,
-            transactionId: txn.id,
-            amountReturned: amount.toNumber(),
+            transactionId: principalTxn.id,
+            amountReturned: remainingAmount.toNumber(),
             remainingPrincipalAfter: newRemaining.toNumber(),
             returnDate: transactionDate,
             createdById,
@@ -243,8 +221,66 @@ export async function recordTransaction(
       }
     }
 
-    return createdTransactions;
-  });
+    // Recompute lastInterestPaidThrough once at end
+    if (isAutoApproved) {
+      await recomputeLastSettledThrough(tx, tenantId, loan.id, loan);
+    }
+  } else {
+    // PRINCIPAL_RETURN
+    if (amount.gt(remainingPrincipal)) {
+      throw AppError.badRequest('Amount exceeds remaining principal');
+    }
+
+    const newRemaining = remainingPrincipal.minus(amount);
+
+    const txn = await tx.transaction.create({
+      data: {
+        tenantId,
+        loanId: loan.id,
+        transactionType: 'PRINCIPAL_RETURN',
+        amount: amount.toNumber(),
+        transactionDate,
+        approvalStatus,
+        collectedById,
+        entryId,
+        approvedById: isAutoApproved ? createdById : undefined,
+        approvedAt: isAutoApproved ? new Date() : undefined,
+        notes: data.notes,
+      },
+    });
+    createdTransactions.push(formatTransaction(txn));
+
+    // Side effects only when auto-approved
+    if (isAutoApproved) {
+      // Decrement remaining principal with optimistic lock
+      const updateResult = await tx.loan.updateMany({
+        where: { id: loan.id, tenantId, version: loan.version },
+        data: {
+          remainingPrincipal: newRemaining.toNumber(),
+          billingPrincipal: newRemaining.toNumber(),
+          version: { increment: 1 },
+        },
+      });
+      if (updateResult.count === 0) {
+        throw AppError.conflict('Loan was modified concurrently, please retry');
+      }
+
+      // Insert principal_returns record
+      await tx.principalReturn.create({
+        data: {
+          tenantId,
+          loanId: loan.id,
+          transactionId: txn.id,
+          amountReturned: amount.toNumber(),
+          remainingPrincipalAfter: newRemaining.toNumber(),
+          returnDate: transactionDate,
+          createdById,
+        },
+      });
+    }
+  }
+
+  return createdTransactions;
 }
 
 // ─── Daily Collection Handler ─────────────────────────────────────────────
@@ -259,6 +295,7 @@ async function handleDailyCollection(
   data: { amount: number; transaction_date: string; notes?: string },
   approvalStatus: string,
   isAutoApproved: boolean,
+  entry: { entryId: string; collectedById: string },
 ) {
   const transactionDate = parseDate(data.transaction_date);
 
@@ -270,7 +307,8 @@ async function handleDailyCollection(
       amount: data.amount,
       transactionDate,
       approvalStatus,
-      collectedById: createdById,
+      collectedById: entry.collectedById,
+      entryId: entry.entryId,
       approvedById: isAutoApproved ? createdById : undefined,
       approvedAt: isAutoApproved ? new Date() : undefined,
       notes: data.notes,
@@ -307,6 +345,7 @@ async function handlePenaltyPayment(
   data: { amount: number; transaction_date: string; penalty_id?: string; notes?: string },
   approvalStatus: string,
   isAutoApproved: boolean,
+  entry: { entryId: string; collectedById: string },
 ) {
   const transactionDate = parseDate(data.transaction_date);
   const amount = new Decimal(data.amount);
@@ -358,7 +397,8 @@ async function handlePenaltyPayment(
       amount: amount.toNumber(),
       transactionDate,
       approvalStatus,
-      collectedById: createdById,
+      collectedById: entry.collectedById,
+      entryId: entry.entryId,
       approvedById: isAutoApproved ? createdById : undefined,
       approvedAt: isAutoApproved ? new Date() : undefined,
       notes: data.notes,
@@ -664,6 +704,7 @@ export async function listTransactions(
       include: {
         loan: { select: { loanNumber: true, borrower: { select: { fullName: true } } } },
         collectedBy: { select: { name: true } },
+        corrections: { select: { id: true }, take: 1 },
       },
       orderBy: { createdAt: 'desc' },
       skip,
@@ -742,6 +783,7 @@ async function handleGuarantorPayment(
   data: { amount: number; transaction_date: string; notes?: string },
   approvalStatus: string,
   isAutoApproved: boolean,
+  entry: { entryId: string; collectedById: string },
 ) {
   const transactionDate = parseDate(data.transaction_date);
 
@@ -753,7 +795,8 @@ async function handleGuarantorPayment(
       amount: data.amount,
       transactionDate,
       approvalStatus,
-      collectedById: createdById,
+      collectedById: entry.collectedById,
+      entryId: entry.entryId,
       approvedById: isAutoApproved ? createdById : undefined,
       approvedAt: isAutoApproved ? new Date() : undefined,
       notes: data.notes,
@@ -860,7 +903,7 @@ async function handleCorrectiveTransaction(
 
 // ─── Reversed Side Effects ───────────────────────────────────────────────
 
-async function executeReversedSideEffects(
+export async function executeReversedSideEffects(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
   tenantId: string,
@@ -901,10 +944,17 @@ async function executeReversedSideEffects(
       throw AppError.conflict('Loan was modified concurrently, please retry');
     }
 
-    // Insert negative principal_returns record
+    // Insert negative principal_returns record. It carries the date of the return
+    // it undoes, so the two cancel out for every billing cycle — interest is
+    // then charged as if the return had never been recorded. (Dating it "today"
+    // left any cycle starting between the two dates billed on the reduced principal.)
     const currentLoan = await tx.loan.findFirst({
       where: { id: loan.id, tenantId },
       select: { remainingPrincipal: true },
+    });
+    const originalReturn = await tx.principalReturn.findFirst({
+      where: { transactionId: original.id, tenantId },
+      select: { returnDate: true },
     });
     await tx.principalReturn.create({
       data: {
@@ -913,7 +963,7 @@ async function executeReversedSideEffects(
         transactionId: correctiveTransactionId,
         amountReturned: -absAmount,
         remainingPrincipalAfter: Number(currentLoan.remainingPrincipal),
-        returnDate: parseDate(new Date().toISOString().slice(0, 10)),
+        returnDate: originalReturn?.returnDate ?? original.transactionDate,
         createdById: original.collectedById ?? original.approvedById,
       },
     });
@@ -981,7 +1031,7 @@ async function executeReversedSideEffects(
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function formatTransaction(txn: any) {
+export function formatTransaction(txn: any) {
   return {
     id: txn.id,
     loanId: txn.loanId,
@@ -992,6 +1042,20 @@ function formatTransaction(txn: any) {
     approvalStatus: txn.approvalStatus,
     notes: txn.notes,
     createdAt: txn.createdAt.toISOString(),
+    ...correctionFlags(txn),
+  };
+}
+
+/**
+ * isCorrection: this row undoes another one. isCorrected: another row undoes this
+ * one (known only when the query loaded `corrections`; a row just created has none).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function correctionFlags(txn: any) {
+  return {
+    correctedTransactionId: txn.correctedTransactionId ?? null,
+    isCorrection: txn.correctedTransactionId != null,
+    isCorrected: Array.isArray(txn.corrections) && txn.corrections.length > 0,
   };
 }
 
@@ -1014,5 +1078,6 @@ function formatTransactionDetail(txn: any) {
     rejectionReason: txn.rejectionReason,
     notes: txn.notes,
     createdAt: txn.createdAt.toISOString(),
+    ...correctionFlags(txn),
   };
 }

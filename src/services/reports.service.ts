@@ -63,6 +63,9 @@ export async function getCollectorSummary(tenantId: string, from: string, to: st
           AND t.tenant_id = ${tenantId}::uuid
           AND t.transaction_date BETWEEN ${from}::date AND ${to}::date
           AND t.transaction_type NOT IN ('DISBURSEMENT', 'OPENING_BALANCE', 'INTEREST_WAIVER', 'PENALTY_WAIVER')
+          -- a collection that was later removed or corrected is not credited, nor is the row undoing it
+          AND t.corrected_transaction_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM transactions c WHERE c.corrected_transaction_id = t.id)
         WHERE u.tenant_id = ${tenantId}::uuid
           AND u.role = 'COLLECTOR'
           AND u.is_active = true

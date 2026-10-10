@@ -11,6 +11,8 @@ import {
   transactionIdParamSchema,
   listTransactionsQuerySchema,
   pendingTransactionsQuerySchema,
+  fixEntrySchema,
+  removeEntrySchema,
 } from '../schemas/transaction.schema.js';
 import * as transactionsController from '../controllers/transactions.controller.js';
 
@@ -70,6 +72,30 @@ router.patch(
   requireRole('ADMIN'),
   validate({ params: transactionIdParamSchema, body: rejectTransactionSchema }),
   transactionsController.rejectTransactionHandler,
+);
+
+// ADMIN only — the payment a transaction belongs to, and whether it may be changed
+router.get(
+  '/:id/entry',
+  requireRole('ADMIN'),
+  validate({ params: transactionIdParamSchema }),
+  transactionsController.getEntryHandler,
+);
+
+// ADMIN only — undo a wrongly recorded payment and record the corrected one
+router.post(
+  '/:id/fix',
+  requireRole('ADMIN'),
+  validate({ params: transactionIdParamSchema, body: fixEntrySchema }),
+  transactionsController.fixEntryHandler,
+);
+
+// ADMIN only — undo a payment that should not have been recorded
+router.post(
+  '/:id/remove',
+  requireRole('ADMIN'),
+  validate({ params: transactionIdParamSchema, body: removeEntrySchema }),
+  transactionsController.removeEntryHandler,
 );
 
 export default router;

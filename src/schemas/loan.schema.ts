@@ -152,6 +152,10 @@ export const loanTransactionResponseSchema = z
     approvalStatus: z.string().openapi({ example: 'APPROVED' }),
     notes: z.string().nullable().openapi({ example: null }),
     createdAt: z.string().openapi({ example: '2026-02-15T10:30:00.000Z' }),
+    correctedTransactionId: z.string().uuid().nullable().openapi({ example: null }),
+    isCorrection: z.boolean().openapi({ example: false }),
+    isCorrected: z.boolean().openapi({ example: false }),
+    canFix: z.boolean().openapi({ example: false }),
   })
   .openapi('LoanTransactionResponse');
 

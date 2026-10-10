@@ -56,6 +56,9 @@ export const transactionResponseSchema = z
     approvalStatus: z.string().openapi({ example: 'APPROVED' }),
     notes: z.string().nullable().openapi({ example: null }),
     createdAt: z.string().openapi({ example: '2026-02-15T10:30:00.000Z' }),
+    correctedTransactionId: z.string().uuid().nullable().openapi({ example: null }),
+    isCorrection: z.boolean().openapi({ example: false }),
+    isCorrected: z.boolean().openapi({ example: false }),
   })
   .openapi('TransactionResponse');
 
@@ -153,8 +156,61 @@ export const transactionDetailResponseSchema = z
     rejectionReason: z.string().nullable().openapi({ example: null }),
     notes: z.string().nullable().openapi({ example: null }),
     createdAt: z.string().openapi({ example: '2026-02-15T10:30:00.000Z' }),
+    correctedTransactionId: z.string().uuid().nullable().openapi({ example: null }),
+    isCorrection: z.boolean().openapi({ example: false }),
+    isCorrected: z.boolean().openapi({ example: false }),
   })
   .openapi('TransactionDetailResponse');
+
+// ─── Fixing and Removing Entries ─────────────────────────────────────────
+
+/** The corrected payment that replaces a wrongly recorded one. Same rules as a new payment. */
+export const fixEntrySchema = z
+  .object({
+    loan_id: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+    transaction_type: z
+      .enum(['INTEREST_PAYMENT', 'PRINCIPAL_RETURN', 'DAILY_COLLECTION', 'PENALTY', 'GUARANTOR_PAYMENT'])
+      .openapi({ example: 'INTEREST_PAYMENT' }),
+    amount: z.number().positive().openapi({ example: 2000 }),
+    penalty_id: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+    transaction_date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
+      .openapi({ example: '2026-10-11' }),
+    notes: z.string().max(2000).optional().openapi({ example: 'Monthly interest payment' }),
+    reason: z.string().max(2000).optional().openapi({ example: 'Entered as principal by mistake' }),
+  })
+  .openapi('FixEntryRequest');
+
+export const removeEntrySchema = z
+  .object({
+    reason: z.string().max(2000).optional().openapi({ example: 'Recorded twice' }),
+  })
+  .openapi('RemoveEntryRequest');
+
+export const entryResponseSchema = z
+  .object({
+    transactionId: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+    loanId: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+    loanNumber: z.string().openapi({ example: 'ML-2026-0001' }),
+    borrowerName: z.string().openapi({ example: 'John Doe' }),
+    loanType: z.enum(['MONTHLY', 'DAILY']).openapi({ example: 'MONTHLY' }),
+    transactionType: z.string().nullable().openapi({ example: 'PRINCIPAL_RETURN' }),
+    amount: z.number().openapi({ example: 2000 }),
+    transactionDate: z.string().nullable().openapi({ example: '2026-10-11' }),
+    notes: z.string().nullable().openapi({ example: null }),
+    canFix: z.boolean().openapi({ example: true }),
+    reason: z.string().nullable().openapi({ example: null }),
+    rows: z.array(transactionResponseSchema),
+  })
+  .openapi('EntryResponse');
+
+export const fixEntryResponseSchema = z
+  .object({
+    removed: z.array(transactionResponseSchema),
+    recorded: z.array(transactionResponseSchema),
+  })
+  .openapi('FixEntryResponse');
 
 export const bulkCollectionResponseSchema = z
   .object({

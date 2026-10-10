@@ -31,6 +31,9 @@ export async function getMissedCollectionsToday(tx: TxClient, tenantId: string, 
           AND t.transaction_type = 'DAILY_COLLECTION'
           AND t.approval_status IN ('APPROVED', 'PENDING')
           AND t.transaction_date = ${todayStr}::date
+          -- a collection that was later removed or corrected does not count, nor does the row undoing it
+          AND t.corrected_transaction_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM transactions c WHERE c.corrected_transaction_id = t.id)
       )
     ORDER BY c.full_name ASC
   `;
@@ -87,6 +90,8 @@ export async function getTodaySummary(tx: TxClient, tenantId: string, todayStr: 
       AND t.transaction_type = 'DAILY_COLLECTION'
       AND t.approval_status = 'APPROVED'
       AND t.transaction_date = ${todayStr}::date
+      AND t.corrected_transaction_id IS NULL
+      AND NOT EXISTS (SELECT 1 FROM transactions c WHERE c.corrected_transaction_id = t.id)
       AND l.loan_type = 'DAILY'
       AND l.status = 'ACTIVE'
   `;

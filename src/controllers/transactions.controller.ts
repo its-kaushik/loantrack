@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import * as transactionsService from '../services/transactions.service.js';
+import * as entryFixesService from '../services/entry-fixes.service.js';
 import prisma from '../lib/prisma.js';
 import { sendSuccess, sendPaginated } from '../utils/response.js';
 
@@ -73,6 +74,24 @@ export async function rejectTransactionHandler(req: Request, res: Response) {
     req.user!.userId,
     req.body.rejection_reason,
   );
+  sendSuccess(res, result);
+}
+
+export async function getEntryHandler(req: Request, res: Response) {
+  const transactionId = req.params.id as string;
+  const entry = await entryFixesService.getEntry(req.tenantId!, transactionId);
+  sendSuccess(res, entry);
+}
+
+export async function fixEntryHandler(req: Request, res: Response) {
+  const transactionId = req.params.id as string;
+  const result = await entryFixesService.fixEntry(req.tenantId!, req.user!.userId, transactionId, req.body);
+  sendSuccess(res, result);
+}
+
+export async function removeEntryHandler(req: Request, res: Response) {
+  const transactionId = req.params.id as string;
+  const result = await entryFixesService.removeEntry(req.tenantId!, req.user!.userId, transactionId, req.body);
   sendSuccess(res, result);
 }
 

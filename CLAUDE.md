@@ -131,7 +131,7 @@ Core logic is in `services/loans.service.ts` and `services/transactions.service.
 - Interest per cycle = billing principal × `interestRate` / 100. `interestRate` is a **monthly** percentage.
 - `monthlyDueDay` = day-of-month of disbursement, immutable; due dates clamp to short months (`getDueDate`). The first cycle is the month after disbursement.
 - A cycle is identified by the calendar month of a transaction's `effectiveDate`. Settled when approved `INTEREST_PAYMENT` + `INTEREST_WAIVER` for that month ≥ interest due.
-- Billing principal for a cycle = remaining principal after the last principal return dated before the 1st of that month (`getBillingPrincipalForCycle`).
+- Billing principal for a cycle = the principal outstanding when that month began, worked back as *current remaining principal + everything returned on or after the 1st of that month* (`getBillingPrincipalForCycle`). It sums `principal_returns` amounts rather than picking "the last return before the cycle", so it does not depend on row order: a return and its reversal (a negative row carrying the same date) cancel for every cycle.
 - Clients do **not** send `effective_date`. An `INTEREST_PAYMENT` is split server-side across the oldest unsettled cycles (one transaction row per cycle); any excess becomes an auto-split `PRINCIPAL_RETURN` and is rejected if it exceeds remaining principal. The endpoint therefore returns an **array** of transactions.
 - `PRINCIPAL_RETURN` lowers `remainingPrincipal` and `billingPrincipal` together and writes a `principal_returns` row.
 - `lastInterestPaidThrough` is derived state, recomputed by `recomputeLastSettledThrough` after any interest payment, waiver or correction.
@@ -153,7 +153,20 @@ Core logic is in `services/loans.service.ts` and `services/transactions.service.
 - `POST /transactions/bulk` (daily collections, max 100) requires an `Idempotency-Key` header, cached for 24 h; items are processed independently so the response reports per-item success/failure with HTTP 201.
 
 ### Corrections
-Admin-only. A corrective transaction references `corrected_transaction_id`, has a **negative** amount, the same type as the original, and reverses its side effects. One correction per original. A DB check constraint enforces `amount > 0 OR corrected_transaction_id IS NOT NULL`.
+Admin-only. Recorded money rows are never edited or deleted. A corrective transaction references `corrected_transaction_id`, has a **negative** amount, the same type as the original, and reverses its side effects. One correction per original. A DB check constraint enforces `amount > 0 OR corrected_transaction_id IS NOT NULL`.
+
+**Entries.** One recorded payment is an *entry*: usually one row, but an interest payment can become several rows (one per month settled, plus a principal return for any excess). The rows share `transactions.entry_id`, set in `recordTransactionInTx`. Rows recorded before the column existed have `NULL` and count as one-row entries; their `created_at` values are not a reliable way to group them (rows of one payment can differ by a millisecond).
+
+**Fix and remove** (`services/entry-fixes.service.ts`, rules in `utils/entry-fixability.ts`):
+- `POST /transactions/:id/remove` undoes an entry that should not exist. `POST /transactions/:id/fix` undoes it and records a replacement, which may differ in loan, type, amount or date. Both run in one DB transaction with the loan rows locked: if the replacement is refused, nothing is undone. `GET /transactions/:id/entry` returns the entry as entered plus `canFix` / `reason`.
+- Each undone row gets a corrective row **dated the same day as the row it undoes** (not today), so that day's totals become what they should have been, and a reversed principal return cancels out for every billing cycle.
+- Daily loans: any entry on an open (ACTIVE or DEFAULTED) loan. Monthly loans: the **latest entry only**, because later entries were worked out on top of earlier ones. A pre-`entry_id` payment that was recorded in several rows is refused.
+- Not fixable: pending or rejected rows, corrections, already-corrected rows, and non-payment rows (disbursement, opening balance, waivers).
+- The replacement stays credited to the original collector (`collectedById`); the admin is the approver.
+- List responses carry `isCorrection` / `isCorrected`, and the loan transaction list adds `canFix`.
+- "Missed today", "received today", the collector's own total and the collector summary ignore both a corrected row and the row that corrects it.
+
+The older path — `POST /transactions` with `corrected_transaction_id` and a caller-chosen date — still works and shares the same reversal code.
 
 ### Loan lifecycle
 - `ACTIVE -> CLOSED` (validated as above, or by settlement for daily loans), `ACTIVE -> DEFAULTED` (also flags the borrower `isDefaulter`), `DEFAULTED -> WRITTEN_OFF`, `DEFAULTED -> CLOSED` (admin judgement, no financial validation), `ACTIVE -> CANCELLED` (only with no approved transactions other than disbursement and no pending ones; needs a reason).

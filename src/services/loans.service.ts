@@ -4,6 +4,7 @@ import { AppError } from '../utils/errors.js';
 import { parseDate, toDateString, getDueDate, today, addDays, daysBetween } from '../utils/date.js';
 import { generateLoanNumber } from '../utils/loan-number.js';
 import { getMissedCollectionsToday } from '../utils/sql/dashboard-queries.js';
+import { fixableIds } from '../utils/entry-fixability.js';
 
 // ─── Shared Select Constants ───────────────────────────────────────────────
 
@@ -614,7 +615,7 @@ async function computeDueDateInfo(
     const dueDateStr = toDateString(dueDate);
 
     // Check if this cycle is settled
-    const billingPrincipalForCycle = await getBillingPrincipalForCycle(prisma, tenantId, loanId, loan, cycleYear, cycleMonth);
+    const billingPrincipalForCycle = await getBillingPrincipalForCycle(prisma, tenantId, loanId, cycleYear, cycleMonth);
     const interestDue = new Decimal(billingPrincipalForCycle.toString()).mul(rate).div(100);
 
     const { paid, waived } = await getCyclePayments(prisma, tenantId, loanId, cycleYear, cycleMonth);
@@ -657,7 +658,7 @@ export async function getLoanTransactions(
   // Verify loan exists in tenant
   const loan = await prisma.loan.findFirst({
     where: { id: loanId, tenantId },
-    select: { id: true },
+    select: { id: true, loanType: true, status: true },
   });
   if (!loan) {
     throw AppError.notFound('Loan not found');
@@ -665,7 +666,7 @@ export async function getLoanTransactions(
 
   const skip = (query.page - 1) * query.limit;
 
-  const [data, total] = await Promise.all([
+  const [data, total, allRows] = await Promise.all([
     prisma.transaction.findMany({
       where: { loanId, tenantId },
       select: {
@@ -677,13 +678,29 @@ export async function getLoanTransactions(
         approvalStatus: true,
         notes: true,
         createdAt: true,
+        correctedTransactionId: true,
+        corrections: { select: { id: true }, take: 1 },
       },
       orderBy: [{ transactionDate: 'desc' }, { createdAt: 'desc' }],
       skip,
       take: query.limit,
     }),
     prisma.transaction.count({ where: { loanId, tenantId } }),
+    // Whether an entry may be fixed depends on the loan's other entries, not just this page
+    prisma.transaction.findMany({
+      where: { loanId, tenantId },
+      select: {
+        id: true,
+        entryId: true,
+        correctedTransactionId: true,
+        transactionType: true,
+        approvalStatus: true,
+        createdAt: true,
+      },
+    }),
   ]);
+
+  const canFixIds = fixableIds(loan, allRows);
 
   return {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -696,6 +713,11 @@ export async function getLoanTransactions(
       approvalStatus: t.approvalStatus,
       notes: t.notes,
       createdAt: t.createdAt.toISOString(),
+      correctedTransactionId: t.correctedTransactionId ?? null,
+      isCorrection: t.correctedTransactionId != null,
+      isCorrected: t.corrections.length > 0,
+      // Shown to admins only; the fix and remove endpoints enforce it again
+      canFix: canFixIds.has(t.id),
     })),
     pagination: { page: query.page, limit: query.limit, total },
   };
@@ -779,7 +801,7 @@ export async function getPaymentStatus(tenantId: string, loanId: string) {
     const dueDate = getDueDate(monthlyDueDay, cycleYear, cycleMonth);
     const dueDateStr = toDateString(dueDate);
 
-    const billingPrincipalForCycle = await getBillingPrincipalForCycle(prisma, tenantId, loanId, loan, cycleYear, cycleMonth);
+    const billingPrincipalForCycle = await getBillingPrincipalForCycle(prisma, tenantId, loanId, cycleYear, cycleMonth);
     const interestDue = new Decimal(billingPrincipalForCycle.toString()).mul(rate).div(100);
 
     const { paid, waived } = await getCyclePayments(prisma, tenantId, loanId, cycleYear, cycleMonth);
@@ -1106,59 +1128,43 @@ export async function settleDailyLoan(
 // ─── Shared Helpers ────────────────────────────────────────────────────────
 
 /**
- * Determines the billing principal for a given cycle.
- * Billing principal for cycle N = remainingPrincipal just before that cycle started.
- * = last principal_returns.remaining_principal_after where return_date < cycle start date,
- *   or the initial billing principal if no returns exist before that date.
+ * Determines the billing principal for a given cycle: the principal outstanding
+ * when that cycle's month began.
  *
- * Since billingPrincipal on the loan is now synced immediately with remainingPrincipal,
- * the fallback reconstructs the initial billing principal from the earliest principal_return
- * record (remainingPrincipalAfter + amountReturned) when returns exist.
+ * It is worked back from where the loan stands now — the current remaining
+ * principal plus everything returned on or after the 1st of the cycle month.
+ * Because it adds amounts up instead of picking "the last return before the
+ * cycle", it does not depend on the order of rows that share a date. A principal
+ * return and its reversal (a negative row carrying the same date) therefore cancel
+ * out for every cycle, as if the return had never been recorded.
+ *
+ * The remaining principal is read here, not taken from the caller, so the result
+ * is right even when the caller changed the loan earlier in the same transaction.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function getBillingPrincipalForCycle(
   db: any,
   tenantId: string,
   loanId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  loan: any,
   cycleYear: number,
   cycleMonth: number,
 ): Promise<number> {
   // Cycle start date is the 1st of that cycle month
   const cycleStartDate = new Date(Date.UTC(cycleYear, cycleMonth - 1, 1));
 
-  const lastReturn = await db.principalReturn.findFirst({
-    where: {
-      loanId,
-      tenantId,
-      returnDate: { lt: cycleStartDate },
-    },
-    orderBy: { returnDate: 'desc' },
-    select: { remainingPrincipalAfter: true },
+  const current = await db.loan.findFirst({
+    where: { id: loanId, tenantId },
+    select: { remainingPrincipal: true },
   });
 
-  if (lastReturn) {
-    return Number(lastReturn.remainingPrincipalAfter);
-  }
-
-  // No returns before this cycle — determine initial billing principal.
-  // Check if any returns exist at all; if so, reconstruct the pre-return value.
-  const firstReturn = await db.principalReturn.findFirst({
-    where: { loanId, tenantId },
-    orderBy: { returnDate: 'asc' },
-    select: { remainingPrincipalAfter: true, amountReturned: true },
+  const returnedSince = await db.principalReturn.aggregate({
+    where: { loanId, tenantId, returnDate: { gte: cycleStartDate } },
+    _sum: { amountReturned: true },
   });
 
-  if (firstReturn) {
-    return Number(firstReturn.remainingPrincipalAfter) + Number(firstReturn.amountReturned);
-  }
-
-  // No returns at all — billingPrincipal is still the initial value
-  if (loan.isMigrated && loan.billingPrincipal != null) {
-    return Number(loan.billingPrincipal);
-  }
-  return Number(loan.principalAmount);
+  return new Decimal(current.remainingPrincipal.toString())
+    .plus(new Decimal((returnedSince._sum.amountReturned ?? 0).toString()))
+    .toNumber();
 }
 
 /**
@@ -1269,7 +1275,7 @@ export async function getUnsettledCycles(
   while (cycleYear < todayYear || (cycleYear === todayYear && cycleMonth <= todayMonth)) {
     const dueDate = getDueDate(monthlyDueDay, cycleYear, cycleMonth);
 
-    const billingPrincipalForCycle = await getBillingPrincipalForCycle(db, tenantId, loanId, loan, cycleYear, cycleMonth);
+    const billingPrincipalForCycle = await getBillingPrincipalForCycle(db, tenantId, loanId, cycleYear, cycleMonth);
     const interestDue = new Decimal(billingPrincipalForCycle.toString()).mul(rate).div(100);
 
     const { paid, waived } = await getCyclePayments(db, tenantId, loanId, cycleYear, cycleMonth);
@@ -1342,7 +1348,7 @@ export async function recomputeLastSettledThrough(
   while (cycleYear < todayYear || (cycleYear === todayYear && cycleMonth <= todayMonth)) {
     const dueDate = getDueDate(monthlyDueDay, cycleYear, cycleMonth);
 
-    const billingPrincipalForCycle = await getBillingPrincipalForCycle(tx, tenantId, loanId, loan, cycleYear, cycleMonth);
+    const billingPrincipalForCycle = await getBillingPrincipalForCycle(tx, tenantId, loanId, cycleYear, cycleMonth);
     const interestDue = new Decimal(billingPrincipalForCycle.toString()).mul(rate).div(100);
 
     const { paid, waived } = await getCyclePayments(tx, tenantId, loanId, cycleYear, cycleMonth);
@@ -1574,6 +1580,8 @@ export async function getMissedToday(tenantId: string, userId: string) {
           AND transaction_type = 'DAILY_COLLECTION'
           AND approval_status IN ('APPROVED', 'PENDING')
           AND transaction_date = ${todayStr}::date
+          AND corrected_transaction_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM transactions c WHERE c.corrected_transaction_id = transactions.id)
       `;
 
       return {

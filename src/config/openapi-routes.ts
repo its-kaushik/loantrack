@@ -53,6 +53,10 @@ import {
   listTransactionsQuerySchema,
   pendingTransactionsQuerySchema,
   transactionDetailResponseSchema,
+  fixEntrySchema,
+  removeEntrySchema,
+  entryResponseSchema,
+  fixEntryResponseSchema,
 } from '../schemas/transaction.schema.js';
 import {
   penaltyIdParamSchema,
@@ -817,6 +821,82 @@ registry.registerPath({
     },
     401: errorResponses[401],
     403: errorResponses[403],
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/transactions/{id}/entry',
+  tags: ['Transactions'],
+  summary: 'The recorded payment a transaction belongs to, and whether it may be fixed or removed',
+  security: bearerAuth,
+  request: {
+    params: transactionIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'The entry',
+      content: { 'application/json': { schema: createSuccessResponse(entryResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/transactions/{id}/fix',
+  tags: ['Transactions'],
+  summary: 'Undo a wrongly recorded payment and record the corrected one in its place',
+  description:
+    'Atomic: every row of the entry gets a corrective row dated the same day and its effect on the loan is reversed, then the replacement is recorded under the same rules as a new payment. If the replacement is refused, nothing changes. Daily loans: any entry on an open loan. Monthly loans: the latest entry only.',
+  security: bearerAuth,
+  request: {
+    params: transactionIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: fixEntrySchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Entry corrected',
+      content: { 'application/json': { schema: createSuccessResponse(fixEntryResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/transactions/{id}/remove',
+  tags: ['Transactions'],
+  summary: 'Undo a payment that should not have been recorded',
+  security: bearerAuth,
+  request: {
+    params: transactionIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: removeEntrySchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Entry removed',
+      content: { 'application/json': { schema: createSuccessResponse(fixEntryResponseSchema) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
   },
 });
 
