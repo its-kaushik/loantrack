@@ -17,7 +17,7 @@ The frontend is a separate repo, expected as a sibling checkout at `../loantrack
 - **Preserve tenant isolation.** Every query filters by `tenantId`; a missing filter leaks one business's books to another.
 - **Don't break the deployed frontend.** Keep API changes backward compatible, or call out exactly what the UI must change.
 - **Hard-to-undo steps need an explicit go-ahead**: committing, pushing, deploying, running migrations, touching real data.
-- **Pushing to `main` is a production deploy.** See [Deployment](#deployment). Work on a branch, and never let code that needs a schema change reach `main` before its migration has been applied to the production database.
+- **Pushing to `main` is a production deploy.** See [Deployment](#deployment). Work on a branch, and never let code that needs a schema change reach `main` before its migration has been applied to the production database. That includes documentation-only pushes: they redeploy the API too.
 
 ## Stack
 
@@ -44,14 +44,40 @@ docker compose up         # db + migrate/seed + api
 
 Swagger UI is served at `/api-docs` (and `/api-docs/swagger.json`) in development and test only. `/health` is an unwrapped infra probe.
 
+Local seed logins (phone / password): super admin `9000000000` / `SuperAdmin@123`, tenant admin `9100000001` / `Admin@123`, collector `9200000001` / `Collector@123` (tenant slug `demo-finance`). These are for local databases only; this repo is public, so none of them may exist with these passwords in production.
+
 ## Deployment
 
 - **API**: Railway (service `loantrack-api`, `loantrack-production.up.railway.app`) builds from the `Dockerfile` and deploys automatically on every push to `main`.
 - **Frontend**: Vercel deploys `loantrack-ui` `main` to production automatically (`loantrack-ui.vercel.app`); other pushed branches get preview deployments.
-- **Migrations are not run by anything in this repo.** The container starts with `node dist/server.js`, and the production image has no Prisma CLI (dev dependencies are omitted). Whether Railway runs a pre-deploy command is set in its dashboard — check before assuming. Otherwise a migration is applied by hand with `npx prisma migrate deploy`, with `DIRECT_URL` pointing at the production database, and that must happen **before** the code that needs it is pushed to `main`.
-- Keep migrations backward compatible (additive, nullable) so the currently deployed code keeps working once they are applied.
+- **Database**: Supabase Postgres, reached through its connection pooler.
+- Deployment status for a commit is visible without dashboard access: `gh api repos/<owner>/<repo>/deployments?sha=<sha>` and its `/statuses`.
 
-Seed logins (phone / password): super admin `9000000000` / `SuperAdmin@123`, tenant admin `9100000001` / `Admin@123`, collector `9200000001` / `Collector@123` (tenant slug `demo-finance`).
+### Applying a migration to production
+
+Migrations are applied **by hand**. Nothing runs them on deploy: the container starts with `node dist/server.js`, the production image has no Prisma CLI (dev dependencies are omitted), and Railway's pre-deploy and custom start commands are empty (confirmed 2026-10-11).
+
+Order matters, because pushing to `main` deploys the code:
+
+1. Write the migration so the currently deployed code keeps working once it is applied (additive, nullable columns; no renames or drops in the same release).
+2. Apply it to production. The owner runs this in their own terminal — the connection string holds the database password and must never be pasted into a chat, a file in this repo or shell history.
+3. Only then merge and push the code that needs it. Confirm the Railway deployment succeeded and `/health` responds.
+4. Ship any frontend that depends on it last.
+
+The connection to use is **not** the one in Railway as it stands. Both `DATABASE_URL` and `DIRECT_URL` there point at Supabase's transaction pooler (port `6543`, `?pgbouncer=true`), which is right for the app but can hang or fail `prisma migrate`. Use the same URL with the port changed to `5432` (session pooler) and the query string removed:
+
+```bash
+# run from a checkout that contains the new migration folder
+read -s "PROD_URL?Paste DIRECT_URL from Railway: "
+PROD_URL="${PROD_URL/:6543\//:5432/}"; PROD_URL="${PROD_URL%%\?*}"
+echo "Will connect to: ${PROD_URL##*@}"      # host:5432/postgres, no password
+
+DIRECT_URL="$PROD_URL" DATABASE_URL="$PROD_URL" npx prisma migrate status   # read-only
+DIRECT_URL="$PROD_URL" DATABASE_URL="$PROD_URL" npx prisma migrate deploy
+unset PROD_URL
+```
+
+`migrate status` must list only the new migration as not yet applied. If it lists anything else, or says the database is not managed by Prisma Migrate, stop and investigate before applying.
 
 ## Layout
 
