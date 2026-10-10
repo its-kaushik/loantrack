@@ -54,6 +54,8 @@ const loanDailyDetailSelect = {
   termEndDate: true,
   graceDays: true,
   totalCollected: true,
+  originalTotalRepaymentAmount: true,
+  settlementNote: true,
   collateralDescription: true,
   collateralEstimatedValue: true,
   notes: true,
@@ -77,6 +79,8 @@ const loanFullDetailSelect = {
   termEndDate: true,
   graceDays: true,
   totalCollected: true,
+  originalTotalRepaymentAmount: true,
+  settlementNote: true,
 } as const;
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -138,6 +142,10 @@ function formatDailyLoanDetail(loan: Record<string, unknown>) {
     termEndDate: l.termEndDate ? toDateString(l.termEndDate) : null,
     graceDays: l.graceDays,
     totalCollected: Number(l.totalCollected),
+    isSettled: l.originalTotalRepaymentAmount != null,
+    originalTotalRepaymentAmount:
+      l.originalTotalRepaymentAmount != null ? Number(l.originalTotalRepaymentAmount) : null,
+    settlementNote: l.settlementNote ?? null,
     collateralDescription: l.collateralDescription,
     collateralEstimatedValue: l.collateralEstimatedValue != null ? Number(l.collateralEstimatedValue) : null,
     notes: l.notes,
@@ -386,6 +394,9 @@ export async function createDailyLoan(
       termEndDate: toDateString(termEndDate),
       graceDays: loan.graceDays,
       totalCollected: 0,
+      isSettled: false,
+      originalTotalRepaymentAmount: null,
+      settlementNote: null,
       collateralDescription: loan.collateralDescription,
       collateralEstimatedValue: loan.collateralEstimatedValue != null ? Number(loan.collateralEstimatedValue) : null,
       notes: loan.notes,
@@ -523,7 +534,8 @@ function getDailyLoanDetail(loan: any) {
 
   const totalRemaining = totalRepayment.minus(totalCollected);
   const daysPaid = dailyPayment.gt(0) ? totalCollected.div(dailyPayment).floor().toNumber() : 0;
-  const daysRemaining = Math.max(0, termDays - daysPaid);
+  // A settled loan has nothing left to collect, whatever the original schedule said
+  const daysRemaining = detail.isSettled ? 0 : Math.max(0, termDays - daysPaid);
   const daysElapsed = daysBetween(loan.disbursementDate, loan.closureDate ?? new Date());
 
   const todayDate = parseDate(today());
@@ -985,6 +997,110 @@ export async function closeLoan(tenantId: string, loanId: string, closedById: st
     select: loanDetailSelect,
   });
   return formatLoanDetail(updated!);
+}
+
+// ─── settleDailyLoan ──────────────────────────────────────────────────────
+
+/**
+ * Closes an ACTIVE daily loan for less than its scheduled total, at exactly what
+ * has been collected. Used when a borrower repays early and is charged less
+ * interest than the full term's.
+ *
+ * totalRepaymentAmount is lowered to totalCollected (the scheduled total is kept in
+ * originalTotalRepaymentAmount), so every aggregate that derives interest and
+ * outstanding amounts from those two columns stays correct without recording any
+ * money that was never received.
+ */
+export async function settleDailyLoan(
+  tenantId: string,
+  loanId: string,
+  adminId: string,
+  data: { settlement_amount: number; note?: string },
+) {
+  return prisma.$transaction(async (tx) => {
+    const loan = await tx.loan.findFirst({
+      where: { id: loanId, tenantId },
+      select: {
+        id: true,
+        status: true,
+        loanType: true,
+        version: true,
+        principalAmount: true,
+        totalCollected: true,
+        totalRepaymentAmount: true,
+      },
+    });
+
+    if (!loan) {
+      throw AppError.notFound('Loan not found');
+    }
+
+    if (loan.loanType !== 'DAILY') {
+      throw AppError.badRequest('Only DAILY loans can be settled');
+    }
+
+    if (loan.status !== 'ACTIVE') {
+      throw AppError.badRequest('Only ACTIVE loans can be settled');
+    }
+
+    const principal = new Decimal(loan.principalAmount.toString());
+    const totalCollected = new Decimal(loan.totalCollected.toString());
+    const totalRepayment = new Decimal(loan.totalRepaymentAmount!.toString());
+
+    if (totalCollected.gte(totalRepayment)) {
+      throw AppError.badRequest('Loan is fully repaid: close it instead of settling');
+    }
+
+    // Settling below principal would be a loss, which is what default/write-off record
+    if (totalCollected.lt(principal)) {
+      throw AppError.badRequest('Cannot settle loan: total collected is less than the principal');
+    }
+
+    // The admin confirms a specific figure; refuse if it is no longer what was collected
+    if (!new Decimal(data.settlement_amount).eq(totalCollected)) {
+      throw AppError.conflict(
+        `Settlement amount does not match total collected (${totalCollected.toFixed(2)}), please review and retry`,
+      );
+    }
+
+    // A pending collection approved after closing would change the settled amount
+    const pendingCount = await tx.transaction.count({
+      where: { loanId, tenantId, approvalStatus: 'PENDING' },
+    });
+    if (pendingCount > 0) {
+      throw AppError.badRequest('Cannot settle loan with pending transactions');
+    }
+
+    const outstandingPenalties = await tx.penalty.count({
+      where: { loanId, tenantId, status: { in: ['PENDING', 'PARTIALLY_PAID'] } },
+    });
+    if (outstandingPenalties > 0) {
+      throw AppError.badRequest('Cannot settle loan with outstanding penalties');
+    }
+
+    const result = await tx.loan.updateMany({
+      where: { id: loanId, tenantId, version: loan.version },
+      data: {
+        originalTotalRepaymentAmount: loan.totalRepaymentAmount,
+        totalRepaymentAmount: loan.totalCollected,
+        settlementNote: data.note?.trim() || null,
+        status: 'CLOSED',
+        closureDate: parseDate(today()),
+        closedById: adminId,
+        version: { increment: 1 },
+      },
+    });
+
+    if (result.count === 0) {
+      throw AppError.conflict('Loan was modified concurrently, please retry');
+    }
+
+    const updated = await tx.loan.findFirst({
+      where: { id: loanId, tenantId },
+      select: loanDailyDetailSelect,
+    });
+    return getDailyLoanDetail(updated!);
+  });
 }
 
 // ─── Shared Helpers ────────────────────────────────────────────────────────

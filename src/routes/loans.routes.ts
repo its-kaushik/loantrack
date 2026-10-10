@@ -9,6 +9,7 @@ import {
   listLoanTransactionsQuerySchema,
   createLoanSchema,
   cancelLoanSchema,
+  settleLoanSchema,
 } from '../schemas/loan.schema.js';
 import { migrateLoanSchema } from '../schemas/migration.schema.js';
 import {
@@ -84,6 +85,14 @@ router.patch(
   requireRole('ADMIN'),
   validate({ params: loanIdParamSchema }),
   loansController.closeLoanHandler,
+);
+
+// ADMIN only can settle a daily loan for less than its scheduled total
+router.patch(
+  '/:id/settle',
+  requireRole('ADMIN'),
+  validate({ params: loanIdParamSchema, body: settleLoanSchema }),
+  loansController.settleLoanHandler,
 );
 
 // ADMIN only can default

@@ -17,6 +17,7 @@ The frontend is a separate repo, expected as a sibling checkout at `../loantrack
 - **Preserve tenant isolation.** Every query filters by `tenantId`; a missing filter leaks one business's books to another.
 - **Don't break the deployed frontend.** Keep API changes backward compatible, or call out exactly what the UI must change.
 - **Hard-to-undo steps need an explicit go-ahead**: committing, pushing, deploying, running migrations, touching real data.
+- **Pushing to `main` is a production deploy.** See [Deployment](#deployment). Work on a branch, and never let code that needs a schema change reach `main` before its migration has been applied to the production database.
 
 ## Stack
 
@@ -42,6 +43,13 @@ docker compose up         # db + migrate/seed + api
 ```
 
 Swagger UI is served at `/api-docs` (and `/api-docs/swagger.json`) in development and test only. `/health` is an unwrapped infra probe.
+
+## Deployment
+
+- **API**: Railway (service `loantrack-api`, `loantrack-production.up.railway.app`) builds from the `Dockerfile` and deploys automatically on every push to `main`.
+- **Frontend**: Vercel deploys `loantrack-ui` `main` to production automatically (`loantrack-ui.vercel.app`); other pushed branches get preview deployments.
+- **Migrations are not run by anything in this repo.** The container starts with `node dist/server.js`, and the production image has no Prisma CLI (dev dependencies are omitted). Whether Railway runs a pre-deploy command is set in its dashboard — check before assuming. Otherwise a migration is applied by hand with `npx prisma migrate deploy`, with `DIRECT_URL` pointing at the production database, and that must happen **before** the code that needs it is pushed to `main`.
+- Keep migrations backward compatible (additive, nullable) so the currently deployed code keeps working once they are applied.
 
 Seed logins (phone / password): super admin `9000000000` / `SuperAdmin@123`, tenant admin `9100000001` / `Admin@123`, collector `9200000001` / `Collector@123` (tenant slug `demo-finance`).
 
@@ -110,6 +118,7 @@ Core logic is in `services/loans.service.ts` and `services/transactions.service.
 - Penalties are daily-loan only and admin-imposed: `ceil(daysOverdue / 30)` months owed, minus months already charged across **all** penalties (waived ones included), × principal × rate / 100; `override_amount` replaces the computed figure. `PENALTY` payments go to a named penalty or the oldest unpaid one.
 - Interest earned on daily loans is recognised **proportionally** on each rupee collected (`collected × (totalRepayment − principal) / totalRepayment`), and deployed/outstanding principal uses the same ratio.
 - Close requires `totalCollected ≥ totalRepayment` and no `PENDING` / `PARTIALLY_PAID` penalties.
+- **Settlement** (`PATCH /loans/:id/settle`, admin): closes an ACTIVE daily loan at exactly what has been collected when that covers the principal but not the scheduled total — typically an early repayment charged less than the full term's interest. There is no formula; the amount is the lender's judgement. `totalRepaymentAmount` is lowered to `totalCollected` and the scheduled total is kept in `originalTotalRepaymentAmount` (`isSettled` in responses), so the proportional interest and outstanding formulas stay correct with no query changes and no phantom money. The request must carry `settlement_amount` equal to the current `totalCollected` (409 otherwise). Refused below principal, when fully repaid (use close), with pending transactions, or with unpaid penalties. Never record a fake collection to make a loan closable.
 
 ### Approval workflow
 - Transactions created by an ADMIN are `APPROVED` immediately and their side effects run in the same DB transaction.
@@ -121,7 +130,7 @@ Core logic is in `services/loans.service.ts` and `services/transactions.service.
 Admin-only. A corrective transaction references `corrected_transaction_id`, has a **negative** amount, the same type as the original, and reverses its side effects. One correction per original. A DB check constraint enforces `amount > 0 OR corrected_transaction_id IS NOT NULL`.
 
 ### Loan lifecycle
-- `ACTIVE -> CLOSED` (validated as above), `ACTIVE -> DEFAULTED` (also flags the borrower `isDefaulter`), `DEFAULTED -> WRITTEN_OFF`, `DEFAULTED -> CLOSED` (admin judgement, no financial validation), `ACTIVE -> CANCELLED` (only with no approved transactions other than disbursement and no pending ones; needs a reason).
+- `ACTIVE -> CLOSED` (validated as above, or by settlement for daily loans), `ACTIVE -> DEFAULTED` (also flags the borrower `isDefaulter`), `DEFAULTED -> WRITTEN_OFF`, `DEFAULTED -> CLOSED` (admin judgement, no financial validation), `ACTIVE -> CANCELLED` (only with no approved transactions other than disbursement and no pending ones; needs a reason).
 - Transactions are accepted on `ACTIVE` and `DEFAULTED` loans. `GUARANTOR_PAYMENT` is only valid on `DEFAULTED` loans.
 - Cancelled loans are excluded from every financial aggregate.
 
@@ -142,6 +151,7 @@ Admin-only. A corrective transaction references `corrected_transaction_id`, has 
 - **UTC "today".** Server-side `today()` is the UTC date while the frontend uses the device's local date, so they disagree between 00:00 and 05:30 IST.
 - **Login lookup** is `findFirst({ where: { phone } })` with no tenant qualifier, while phone uniqueness is only per tenant.
 - **Tests share one database.** Each integration file creates tenants with its own slug and phone prefix and deletes them in `beforeAll`; pick an unused prefix for a new file. Rate limits are lifted when `NODE_ENV=test`.
+- **Eight tests fail on a clean checkout** (as of 2026-10-11) because they were not updated after earlier changes or rely on hard-coded early-2026 dates: two in `collector-workflow` (removed `effective_date`, overpayment auto-split), two in `daily-loans` (advance interest, in-term overdue), two in `penalties-waivers` (non-overdue penalty, collector access), one in `dashboard` (in-term overdue) and one in `monthly-loans` (multi-cycle overpayment). Compare against that baseline rather than expecting green; a "socket hang up" failure is a flake.
 - Port 3000 is the default for both this API and `next dev` in the frontend.
 
 ## Frontend (`../loantrack-ui`)

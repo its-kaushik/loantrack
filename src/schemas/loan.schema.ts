@@ -92,6 +92,14 @@ export const cancelLoanSchema = z
   })
   .openapi('CancelLoanRequest');
 
+export const settleLoanSchema = z
+  .object({
+    // Must equal the loan's current total collected — the figure the admin confirmed on screen
+    settlement_amount: z.number().positive().openapi({ example: 52500 }),
+    note: z.string().max(2000).optional().openapi({ example: 'Repaid in one month, charged one month of interest' }),
+  })
+  .openapi('SettleLoanRequest');
+
 // ─── Response Schemas ──────────────────────────────────────────────────────
 
 export const loanResponseSchema = z
@@ -176,6 +184,9 @@ export const dailyLoanDetailResponseSchema = loanResponseSchema
     termEndDate: z.string().openapi({ example: '2026-05-10' }),
     graceDays: z.number().openapi({ example: 7 }),
     totalCollected: z.number().openapi({ example: 0 }),
+    isSettled: z.boolean().openapi({ example: false }),
+    originalTotalRepaymentAmount: z.number().nullable().openapi({ example: null }),
+    settlementNote: z.string().nullable().openapi({ example: null }),
     collateralDescription: z.string().nullable().openapi({ example: 'Gold necklace' }),
     collateralEstimatedValue: z.number().nullable().openapi({ example: 50000 }),
     notes: z.string().nullable().openapi({ example: 'Daily loan' }),

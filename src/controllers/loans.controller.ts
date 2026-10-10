@@ -41,6 +41,12 @@ export async function closeLoanHandler(req: Request, res: Response) {
   sendSuccess(res, loan);
 }
 
+export async function settleLoanHandler(req: Request, res: Response) {
+  const loanId = req.params.id as string;
+  const loan = await loansService.settleDailyLoan(req.tenantId!, loanId, req.user!.userId, req.body);
+  sendSuccess(res, loan);
+}
+
 export async function defaultLoanHandler(req: Request, res: Response) {
   const loanId = req.params.id as string;
   const loan = await loansService.defaultLoan(req.tenantId!, loanId, req.user!.userId);

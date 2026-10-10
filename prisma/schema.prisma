@@ -196,6 +196,10 @@ model Loan {
   termEndDate            DateTime?  @map("term_end_date") @db.Date
   graceDays              Int        @default(7) @map("grace_days")
   totalCollected         Decimal    @default(0) @map("total_collected") @db.Decimal(12, 2)
+  // Set only when a daily loan is settled for less than scheduled: keeps the
+  // original total while totalRepaymentAmount is lowered to the amount collected
+  originalTotalRepaymentAmount Decimal? @map("original_total_repayment_amount") @db.Decimal(12, 2)
+  settlementNote         String?    @map("settlement_note") @db.Text
 
   // Common fields
   status                 LoanStatus @default(ACTIVE)

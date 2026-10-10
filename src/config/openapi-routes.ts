@@ -34,6 +34,7 @@ import {
   listLoanTransactionsQuerySchema,
   createLoanSchema,
   cancelLoanSchema,
+  settleLoanSchema,
   loanResponseSchema,
   monthlyLoanDetailResponseSchema,
   dailyLoanDetailResponseSchema,
@@ -607,6 +608,34 @@ registry.registerPath({
     200: {
       description: 'Loan closed',
       content: { 'application/json': { schema: createSuccessResponse(z.union([monthlyLoanDetailResponseSchema, dailyLoanDetailResponseSchema])) } },
+    },
+    400: errorResponses[400],
+    401: errorResponses[401],
+    403: errorResponses[403],
+    404: errorResponses[404],
+    409: errorResponses[409],
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/loans/{id}/settle',
+  tags: ['Loans'],
+  summary: 'Settle and close a daily loan for less than its scheduled total',
+  description:
+    'Closes an ACTIVE daily loan at exactly what has been collected, when that covers the principal but not the full scheduled repayment. The scheduled total is kept in originalTotalRepaymentAmount.',
+  security: bearerAuth,
+  request: {
+    params: loanIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: settleLoanSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Loan settled and closed',
+      content: { 'application/json': { schema: createSuccessResponse(dailyLoanDetailResponseSchema) } },
     },
     400: errorResponses[400],
     401: errorResponses[401],
