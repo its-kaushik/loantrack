@@ -19,8 +19,25 @@ if (!url) {
   process.exit(1);
 }
 
-const db = new pg.Client({ connectionString: url });
-await db.connect();
+// Encrypt the connection whenever the database is not on this machine. A server
+// that cannot do TLS says so before any data is exchanged; only then fall back.
+async function connect() {
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  if (!isLocal) {
+    const secure = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
+    try {
+      await secure.connect();
+      return { client: secure, encrypted: true };
+    } catch (error) {
+      if (!/does not support SSL/i.test(String(error?.message))) throw error;
+    }
+  }
+  const plain = new pg.Client({ connectionString: url });
+  await plain.connect();
+  return { client: plain, encrypted: false };
+}
+
+const { client: db, encrypted } = await connect();
 
 const money = (n) =>
   n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -124,7 +141,9 @@ try {
     }
   }
 
-  console.log(`Database: ${url.replace(/^.*@/, '').replace(/\?.*$/, '')}`);
+  console.log(
+    `Database: ${url.replace(/^.*@/, '').replace(/\?.*$/, '')}  (${encrypted ? 'encrypted connection' : 'unencrypted connection'}, read-only)`,
+  );
   console.log(`Monthly loans checked: ${loans.length}   loan-months checked: ${cyclesChecked}`);
   console.log(
     `Loans with a reversed principal return: ${reversedLoans.length}` +
