@@ -225,6 +225,20 @@ describe('Recoveries on defaulted loans', () => {
     expect(pl.netProfit).toBe(summary.netProfit);
   });
 
+  it('profit and loss for dates ending today counts the loans defaulted today', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const summary = await fundSummary();
+    const pl = await profitLoss(`from=2025-01-01&to=${today}`);
+
+    expect(pl.moneyLostToDefaults).toBe(summary.moneyLostToDefaults);
+  });
+
+  it('profit and loss for dates before the loans were defaulted leaves them out', async () => {
+    const pl = await profitLoss('from=2025-01-01&to=2026-03-31');
+
+    expect(pl.moneyLostToDefaults).toBe('0.00');
+  });
+
   it('profit and loss recognises the interest share on the day the guarantor paid', async () => {
     const pl = await profitLoss('from=2026-03-01&to=2026-03-01');
 

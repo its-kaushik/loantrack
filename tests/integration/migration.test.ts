@@ -511,3 +511,75 @@ describe('Cash in Hand Exclusion', () => {
     expect(res.body.data.queryResult).toBe(res.body.data.bottomUpResult);
   });
 });
+
+// ─── Daily Migration With Nothing Collected Yet ────────────────────────
+
+describe('Daily Migration With Nothing Collected Yet', () => {
+  let loanId: string;
+
+  it('admin migrates daily loan with total_base_collected_so_far 0 → 201', async () => {
+    const res = await request
+      .post('/api/v1/loans/migrate')
+      .set('Authorization', `Bearer ${adminAccessToken}`)
+      .send({
+        loan_type: 'DAILY',
+        borrower_id: borrower2Id,
+        principal_amount: 20000,
+        interest_rate: 5,
+        disbursement_date: '2025-08-17',
+        term_days: 120,
+        grace_days: 0,
+        total_base_collected_so_far: 0,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.loanNumber).toMatch(/^DL-2025-/);
+    expect(res.body.data.graceDays).toBe(0);
+    loanId = res.body.data.id;
+  });
+
+  it('totalCollected is 0 and no OPENING_BALANCE transaction is created', async () => {
+    const loanRes = await request
+      .get(`/api/v1/loans/${loanId}`)
+      .set('Authorization', `Bearer ${adminAccessToken}`);
+
+    expect(loanRes.status).toBe(200);
+    expect(loanRes.body.data.isMigrated).toBe(true);
+    expect(loanRes.body.data.totalCollected).toBe(0);
+
+    const txnRes = await request
+      .get(`/api/v1/loans/${loanId}/transactions`)
+      .set('Authorization', `Bearer ${adminAccessToken}`);
+
+    expect(txnRes.status).toBe(200);
+    expect(txnRes.body.pagination.total).toBe(0);
+  });
+
+  it('the first collection is recorded as on any daily loan', async () => {
+    // 20000 × (1 + 5% × 4) / 120 = 200 a day
+    const res = await request
+      .post('/api/v1/transactions')
+      .set('Authorization', `Bearer ${adminAccessToken}`)
+      .send({
+        loan_id: loanId,
+        transaction_type: 'DAILY_COLLECTION',
+        amount: 200,
+        transaction_date: '2026-01-05',
+      });
+    expect(res.status).toBe(201);
+
+    const loanRes = await request
+      .get(`/api/v1/loans/${loanId}`)
+      .set('Authorization', `Bearer ${adminAccessToken}`);
+    expect(loanRes.body.data.totalCollected).toBe(200);
+  });
+
+  it('reconciliation still matches', async () => {
+    const res = await request
+      .get('/api/v1/fund/reconciliation')
+      .set('Authorization', `Bearer ${adminAccessToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.matches).toBe(true);
+  });
+});

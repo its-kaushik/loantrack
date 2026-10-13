@@ -215,17 +215,20 @@ export async function migrateDailyLoan(
 
     // NO DISBURSEMENT transaction — money was already given
 
-    // Create OPENING_BALANCE transaction (auto-approved)
-    await tx.transaction.create({
-      data: {
-        tenantId,
-        loanId: loan.id,
-        transactionType: 'OPENING_BALANCE',
-        amount: data.total_base_collected_so_far,
-        transactionDate: disbursementDate,
-        approvalStatus: 'APPROVED',
-      },
-    });
+    // Create OPENING_BALANCE transaction (auto-approved).
+    // Nothing collected yet means no row: the database refuses a transaction of 0.
+    if (data.total_base_collected_so_far > 0) {
+      await tx.transaction.create({
+        data: {
+          tenantId,
+          loanId: loan.id,
+          transactionType: 'OPENING_BALANCE',
+          amount: data.total_base_collected_so_far,
+          transactionDate: disbursementDate,
+          approvalStatus: 'APPROVED',
+        },
+      });
+    }
 
     // Create pre-existing penalty rows if provided
     if (data.pre_existing_penalties && data.pre_existing_penalties.length > 0) {
