@@ -180,6 +180,7 @@ The older path — `POST /transactions` with `corrected_transaction_id` and a ca
 ### Fund and reports (`utils/sql/fund-queries.ts`)
 - Cash in hand = fund injections − withdrawals − disbursements + money-in transactions − expenses (approved only, non-cancelled loans, `OPENING_BALANCE` and waivers excluded). `/fund/reconciliation` computes it two ways and compares.
 - Net profit = interest earned (monthly interest + proportional daily interest + penalties) − money lost to defaults (net of guarantor recoveries) − expenses.
+- A recovery on a defaulted loan is counted once. On a daily loan a `GUARANTOR_PAYMENT` adds to `totalCollected`, so it is split into principal and interest like any collection and must not also be subtracted from the loss. On a monthly loan it is subtracted in full, both in the total and in that loan's figure on the defaulters list.
 - `/reports/profit-loss?from&to` filters flows by date but reports `moneyDeployed` and `cashInHand` as current snapshots. `dailyDisbursed`, `monthlyDisbursed`, `totalReceived` exist only in the P&L variant.
 
 ## Gotchas

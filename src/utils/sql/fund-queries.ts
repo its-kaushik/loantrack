@@ -107,6 +107,8 @@ export async function computeFundSummary(tx: TxClient, tenantId: string): Promis
       AND loan_type = 'DAILY'
       AND status IN ('DEFAULTED', 'WRITTEN_OFF')
   `;
+  // Monthly only: a guarantor payment on a daily loan is already in total_collected,
+  // so dailyDefaults above has taken its principal share off the loss.
   const [guarantorRecoveries]: [{ total: unknown }] = await tx.$queryRaw`
     SELECT COALESCE(SUM(t.amount), 0) AS total
     FROM transactions t
@@ -114,6 +116,7 @@ export async function computeFundSummary(tx: TxClient, tenantId: string): Promis
     WHERE t.tenant_id = ${tenantId}::uuid
       AND t.transaction_type = 'GUARANTOR_PAYMENT'
       AND t.approval_status = 'APPROVED'
+      AND l.loan_type = 'MONTHLY'
       AND l.status IN ('DEFAULTED', 'WRITTEN_OFF')
   `;
   const moneyLostToDefaults = toDecimal(monthlyDefaults.total)
@@ -356,7 +359,8 @@ export async function computeProfitLoss(
       AND t.transaction_date BETWEEN ${fromDate}::date AND ${toDate}::date
   `;
 
-  // Daily interest: proportional marginal approach using JOINs (avoids correlated subqueries)
+  // Daily interest: proportional marginal approach using JOINs (avoids correlated subqueries).
+  // Guarantor payments count with collections: both add to total_collected.
   const [dailyInterestRow]: [{ total: unknown }] = await tx.$queryRaw`
     SELECT COALESCE(SUM(
       LEAST(l.total_collected, COALESCE(ct.collected_through, 0))
@@ -371,7 +375,7 @@ export async function computeProfitLoss(
       FROM transactions
       WHERE tenant_id = ${tenantId}::uuid
         AND approval_status = 'APPROVED'
-        AND transaction_type = 'DAILY_COLLECTION'
+        AND transaction_type IN ('DAILY_COLLECTION', 'GUARANTOR_PAYMENT')
         AND transaction_date <= ${toDate}::date
       GROUP BY loan_id
     ) ct ON ct.loan_id = l.id
@@ -380,7 +384,7 @@ export async function computeProfitLoss(
       FROM transactions
       WHERE tenant_id = ${tenantId}::uuid
         AND approval_status = 'APPROVED'
-        AND transaction_type = 'DAILY_COLLECTION'
+        AND transaction_type IN ('DAILY_COLLECTION', 'GUARANTOR_PAYMENT')
         AND transaction_date < ${fromDate}::date
       GROUP BY loan_id
     ) cb ON cb.loan_id = l.id
@@ -425,6 +429,7 @@ export async function computeProfitLoss(
       AND status IN ('DEFAULTED', 'WRITTEN_OFF')
       AND defaulted_at BETWEEN ${fromDate}::date AND ${toDate}::date
   `;
+  // Monthly only, as in computeFundSummary: daily loans carry it in total_collected.
   const [guarantorRecoveriesInRange]: [{ total: unknown }] = await tx.$queryRaw`
     SELECT COALESCE(SUM(t.amount), 0) AS total
     FROM transactions t
@@ -432,6 +437,7 @@ export async function computeProfitLoss(
     WHERE t.tenant_id = ${tenantId}::uuid
       AND t.transaction_type = 'GUARANTOR_PAYMENT'
       AND t.approval_status = 'APPROVED'
+      AND l.loan_type = 'MONTHLY'
       AND l.status IN ('DEFAULTED', 'WRITTEN_OFF')
       AND l.defaulted_at BETWEEN ${fromDate}::date AND ${toDate}::date
   `;
