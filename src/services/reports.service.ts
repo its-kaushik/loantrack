@@ -1,5 +1,6 @@
 import prisma from '../lib/prisma.js';
 import { computeProfitLoss } from '../utils/sql/fund-queries.js';
+import { toDateString } from '../utils/date.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TxClient = any;
@@ -98,7 +99,7 @@ export async function getLoanBook(tenantId: string) {
         status: string;
         borrower_name: string;
         principal_amount: unknown;
-        disbursement_date: unknown;
+        disbursement_date: Date;
         outstanding_amount: unknown;
         interest_earned: unknown;
         guarantor_name: unknown;
@@ -140,7 +141,7 @@ export async function getLoanBook(tenantId: string) {
         status: r.status,
         borrowerName: r.borrower_name,
         principalAmount: toDecimalStr(r.principal_amount),
-        disbursementDate: String(r.disbursement_date).substring(0, 10),
+        disbursementDate: toDateString(r.disbursement_date),
         outstandingAmount: toDecimalStr(r.outstanding_amount),
         interestEarned: toDecimalStr(r.interest_earned),
         guarantorName: r.guarantor_name ? String(r.guarantor_name) : null,

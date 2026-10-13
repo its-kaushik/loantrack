@@ -375,6 +375,19 @@ describe('Loan Book — GET /reports/loan-book', () => {
     }
   });
 
+  it('disbursementDate is the full date the loan was given', async () => {
+    const res = await request
+      .get('/api/v1/reports/loan-book')
+      .set('Authorization', `Bearer ${adminAccessToken}`);
+
+    const dateOf = (loanId: string) =>
+      res.body.data.find((l: { loanId: string }) => l.loanId === loanId).disbursementDate;
+
+    expect(dateOf(activeDaily1Id)).toBe('2026-01-01');
+    expect(dateOf(activeMonthlyId)).toBe('2025-11-15');
+    expect(dateOf(defaultedDailyId)).toBe('2025-05-01');
+  });
+
   it('closed monthly loan outstanding is 0', async () => {
     const res = await request
       .get('/api/v1/reports/loan-book')

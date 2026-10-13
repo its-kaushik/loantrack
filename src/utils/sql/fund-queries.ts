@@ -410,13 +410,15 @@ export async function computeProfitLoss(
     .plus(toDecimal(penaltiesInRange.total));
 
   // 4. Money Lost to Defaults (loans defaulted within range)
+  // defaulted_at is a timestamp, so the range runs to the end of the last day.
   const [monthlyDefaultsInRange]: [{ total: unknown }] = await tx.$queryRaw`
     SELECT COALESCE(SUM(remaining_principal), 0) AS total
     FROM loans
     WHERE tenant_id = ${tenantId}::uuid
       AND loan_type = 'MONTHLY'
       AND status IN ('DEFAULTED', 'WRITTEN_OFF')
-      AND defaulted_at BETWEEN ${fromDate}::date AND ${toDate}::date
+      AND defaulted_at >= ${fromDate}::date
+      AND defaulted_at < (${toDate}::date + INTERVAL '1 day')
   `;
   const [dailyDefaultsInRange]: [{ total: unknown }] = await tx.$queryRaw`
     SELECT COALESCE(SUM(
@@ -427,7 +429,8 @@ export async function computeProfitLoss(
     WHERE tenant_id = ${tenantId}::uuid
       AND loan_type = 'DAILY'
       AND status IN ('DEFAULTED', 'WRITTEN_OFF')
-      AND defaulted_at BETWEEN ${fromDate}::date AND ${toDate}::date
+      AND defaulted_at >= ${fromDate}::date
+      AND defaulted_at < (${toDate}::date + INTERVAL '1 day')
   `;
   // Monthly only, as in computeFundSummary: daily loans carry it in total_collected.
   const [guarantorRecoveriesInRange]: [{ total: unknown }] = await tx.$queryRaw`
@@ -439,7 +442,8 @@ export async function computeProfitLoss(
       AND t.approval_status = 'APPROVED'
       AND l.loan_type = 'MONTHLY'
       AND l.status IN ('DEFAULTED', 'WRITTEN_OFF')
-      AND l.defaulted_at BETWEEN ${fromDate}::date AND ${toDate}::date
+      AND l.defaulted_at >= ${fromDate}::date
+      AND l.defaulted_at < (${toDate}::date + INTERVAL '1 day')
   `;
   const moneyLostToDefaults = toDecimal(monthlyDefaultsInRange.total)
     .plus(toDecimal(dailyDefaultsInRange.total))
