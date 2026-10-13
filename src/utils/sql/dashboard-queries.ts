@@ -293,8 +293,10 @@ export async function getDefaulters(tx: TxClient, tenantId: string): Promise<Def
     SELECT l.id AS loan_id, l.loan_number, l.status::text,
       c.full_name AS borrower_name, c.phone AS borrower_phone,
       g.full_name AS guarantor_name, g.phone AS guarantor_phone,
+      -- Same per-loan figure the fund summary adds up for Money Lost to Defaults.
+      -- Monthly: guarantor payments come off here. Daily: they are already in total_collected.
       CASE
-        WHEN l.loan_type = 'MONTHLY' THEN l.remaining_principal
+        WHEN l.loan_type = 'MONTHLY' THEN l.remaining_principal - COALESCE(gp.recovered, 0)
         ELSE l.principal_amount * GREATEST(l.total_repayment_amount - l.total_collected, 0)
              / NULLIF(l.total_repayment_amount, 0)
       END AS outstanding_amount,
@@ -302,6 +304,14 @@ export async function getDefaulters(tx: TxClient, tenantId: string): Promise<Def
     FROM loans l
     JOIN customers c ON c.id = l.borrower_id
     LEFT JOIN customers g ON g.id = l.guarantor_id
+    LEFT JOIN (
+      SELECT loan_id, SUM(amount) AS recovered
+      FROM transactions
+      WHERE tenant_id = ${tenantId}::uuid
+        AND transaction_type = 'GUARANTOR_PAYMENT'
+        AND approval_status = 'APPROVED'
+      GROUP BY loan_id
+    ) gp ON gp.loan_id = l.id
     WHERE l.tenant_id = ${tenantId}::uuid
       AND l.status IN ('DEFAULTED', 'WRITTEN_OFF')
     ORDER BY l.defaulted_at DESC
